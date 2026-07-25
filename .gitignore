@@ -151,3 +151,12 @@ dmypy.json
 # Pyre type checker
 .pyre/
 learnableearthparser/fast_sampler/_sampler.c
+
+# ---- 3D-reconstruction pipeline data (kept local, regenerable — not pushed) ----
+# Raw input videos (~300 MB): scripts read these from inputs/, but they don't belong in git.
+/inputs/*.mp4
+# Per-object scene data (~GBs): extracted frames, U2Net masks, COLMAP db/sparse, distorted/stereo.
+# All of it is rebuilt by scripts/reconstruct_object.sh from the input video, so it stays local.
+/scenes/
+# Windows/WSL "mark of the web" sidecar files.
+*:Zone.Identifier

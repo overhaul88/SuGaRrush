@@ -12,8 +12,16 @@ from sugar_utils.graphics_utils import focal2fov, fov2focal, getWorld2View2, get
 from sugar_utils.general_utils import PILtoTorch
 
 
-def load_gs_cameras(source_path, gs_output_path, image_resolution=1, 
-                    load_gt_images=True, max_img_size=1920, white_background=False,
+# Every GT image is uploaded to the GPU at load time and kept there, so this cap sets a
+# hard floor on VRAM: n_images * w * h * 3 * 4 bytes. At the upstream default of 1920 a
+# 239-image scene needs ~5.9 GB before a single Gaussian is allocated, which OOMs any
+# small card. 960 matches the `-r 2` resolution the vanilla 3DGS checkpoint is trained at.
+# Raise it with SUGAR_MAX_IMG_SIZE=1920 if you have the VRAM.
+DEFAULT_MAX_IMG_SIZE = int(os.environ.get('SUGAR_MAX_IMG_SIZE', 960))
+
+
+def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
+                    load_gt_images=True, max_img_size=DEFAULT_MAX_IMG_SIZE, white_background=False,
                     remove_indices=[]):
     """Loads Gaussian Splatting camera parameters from a COLMAP reconstruction.
 

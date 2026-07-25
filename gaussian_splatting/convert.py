@@ -11,8 +11,26 @@
 
 import os
 import logging
+import subprocess
 from argparse import ArgumentParser
 import shutil
+
+
+def gpu_option_prefixes(colmap_exe):
+    # COLMAP >= 3.12 renamed --SiftExtraction.use_gpu / --SiftMatching.use_gpu
+    # to --FeatureExtraction.use_gpu / --FeatureMatching.use_gpu. Detect which
+    # spelling the installed binary accepts instead of hard-coding one.
+    # NB: COLMAP prints its option help on stderr, so both streams are captured.
+    try:
+        proc = subprocess.run(
+            colmap_exe.strip('"') + " feature_extractor -h",
+            shell=True, capture_output=True, text=True)
+        help_text = (proc.stdout or "") + (proc.stderr or "")
+    except Exception:
+        help_text = ""
+    if "--FeatureExtraction.use_gpu" in help_text:
+        return "FeatureExtraction", "FeatureMatching"
+    return "SiftExtraction", "SiftMatching"
 
 # This Python script is based on the shell converter script provided in the MipNerF 360 repository.
 parser = ArgumentParser("Colmap converter")
@@ -27,6 +45,7 @@ args = parser.parse_args()
 colmap_command = '"{}"'.format(args.colmap_executable) if len(args.colmap_executable) > 0 else "colmap"
 magick_command = '"{}"'.format(args.magick_executable) if len(args.magick_executable) > 0 else "magick"
 use_gpu = 1 if not args.no_gpu else 0
+extract_opt, match_opt = gpu_option_prefixes(colmap_command)
 
 if not args.skip_matching:
     os.makedirs(args.source_path + "/distorted/sparse", exist_ok=True)
@@ -37,7 +56,7 @@ if not args.skip_matching:
         --image_path " + args.source_path + "/input \
         --ImageReader.single_camera 1 \
         --ImageReader.camera_model " + args.camera + " \
-        --SiftExtraction.use_gpu " + str(use_gpu)
+        --" + extract_opt + ".use_gpu " + str(use_gpu)
     exit_code = os.system(feat_extracton_cmd)
     if exit_code != 0:
         logging.error(f"Feature extraction failed with code {exit_code}. Exiting.")
@@ -46,7 +65,7 @@ if not args.skip_matching:
     ## Feature matching
     feat_matching_cmd = colmap_command + " exhaustive_matcher \
         --database_path " + args.source_path + "/distorted/database.db \
-        --SiftMatching.use_gpu " + str(use_gpu)
+        --" + match_opt + ".use_gpu " + str(use_gpu)
     exit_code = os.system(feat_matching_cmd)
     if exit_code != 0:
         logging.error(f"Feature matching failed with code {exit_code}. Exiting.")

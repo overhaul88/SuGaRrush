@@ -149,7 +149,10 @@ def refined_training(args):
         if (use_sdf_estimation_loss or enforce_samples_to_be_on_surface) and sdf_estimation_mode == 'density':
             density_factor = 1.
         density_threshold = 1.  # 0.5 * density_factor
-        n_samples_for_sdf_regularization = 1_000_000  # 300_000
+        # H1: env-overridable SDF sample count (upstream default 1M; authors note 300k works).
+        # See coarse_density.py for the reasoning. Refinement is short (2k iters) so the
+        # effect here is small, but kept consistent.
+        n_samples_for_sdf_regularization = int(os.environ.get('SUGAR_SDF_SAMPLES', 1_000_000))
         sdf_sampling_scale_factor = 1.5
         sdf_sampling_proportional_to_volume = False
         

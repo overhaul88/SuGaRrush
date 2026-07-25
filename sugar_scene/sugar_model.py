@@ -915,7 +915,8 @@ class SuGaR(nn.Module):
     
     def sample_points_in_gaussians(self, num_samples, sampling_scale_factor=1., mask=None,
                                    probabilities_proportional_to_opacity=False,
-                                   probabilities_proportional_to_volume=True,):
+                                   probabilities_proportional_to_volume=True,
+                                   error_weights=None, error_mix=0.,):
         """Sample points in the Gaussians.
 
         Args:
@@ -946,7 +947,20 @@ class SuGaR(nn.Module):
         areas = areas.abs()
         # cum_probs = areas.cumsum(dim=-1) / areas.sum(dim=-1, keepdim=True)
         cum_probs = areas / areas.sum(dim=-1, keepdim=True)
-        
+
+        # Error-guided sampling: blend the volume-proportional base distribution with an
+        # error-proportional one, so a reduced sample budget concentrates on Gaussians whose
+        # recent SDF residual is high. The (1 - error_mix) fraction stays on the base
+        # distribution as a hard coverage floor, so no region is ever fully starved (the
+        # estimator stays consistent). Deliberately NOT importance-weight-corrected: this is
+        # hard-example mining for a regularizer, where the concentration is the goal.
+        if error_weights is not None and error_mix > 0.:
+            ew = error_weights[mask] if mask is not None else error_weights
+            ew = ew.clamp(min=0.)
+            ew_sum = ew.sum()
+            if ew_sum > 0:
+                cum_probs = (1. - error_mix) * cum_probs + error_mix * (ew / ew_sum)
+
         random_indices = torch.multinomial(cum_probs, num_samples=num_samples, replacement=True)
         if mask is not None:
             valid_indices = torch.arange(self.n_points, device=self.device)[mask]
@@ -957,7 +971,32 @@ class SuGaR(nn.Module):
             sampling_scale_factor * self.scaling[random_indices] * torch.randn_like(self.points[random_indices]))
         
         return random_points, random_indices
-    
+
+    def update_sdf_error_ema(self, residual, gaussian_idx, decay=0.9):
+        """Accumulate a per-Gaussian SDF-residual EMA to drive error-guided sampling.
+
+        `residual` is the per-sample surface-misalignment loss (|density - target|), and
+        `gaussian_idx` its source Gaussians. We scatter-mean the residual onto Gaussians touched
+        this step and EMA it into a persistent per-Gaussian error field (initialised uniform, so
+        sampling starts as the base distribution and adapts smoothly). Untouched Gaussians keep
+        their previous EMA. Cost is O(n_samples + n_points) — negligible vs the field evaluation.
+        """
+        with torch.no_grad():
+            res = residual.detach().flatten()
+            idx = gaussian_idx.detach().flatten()
+            acc = torch.zeros(self.n_points, device=self.device)
+            cnt = torch.zeros(self.n_points, device=self.device)
+            acc.index_add_(0, idx, res)
+            cnt.index_add_(0, idx, torch.ones_like(res))
+            touched = cnt > 0
+            step_err = acc / cnt.clamp(min=1.)
+            if getattr(self, 'sdf_error_ema', None) is None:
+                self.sdf_error_ema = torch.ones(self.n_points, device=self.device)
+            self.sdf_error_ema = torch.where(
+                touched,
+                decay * self.sdf_error_ema + (1. - decay) * step_err,
+                self.sdf_error_ema)
+
     def get_smallest_axis(self, return_idx=False):
         """Returns the smallest axis of the Gaussians.
 

@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1180" viewBox="0 0 960 1180" font-family="'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#5b6b7a"/>
+    </marker>
+    <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f6f9f"/><stop offset="1" stop-color="#255a82"/>
+    </linearGradient>
+    <linearGradient id="gB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a8f6b"/><stop offset="1" stop-color="#2f7357"/>
+    </linearGradient>
+    <linearGradient id="gC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9a6a2f"/><stop offset="1" stop-color="#7d5525"/>
+    </linearGradient>
+    <style>
+      .title{font-size:15px;font-weight:700;fill:#fff}
+      .sub{font-size:11.5px;fill:#dfe7ee}
+      .env{font-size:10px;font-weight:700;fill:#fff;opacity:.85}
+      .lane{font-size:12px;font-weight:700;fill:#6b7a89;letter-spacing:1px}
+      .io{font-size:11px;fill:#41505e}
+      .ioT{font-size:11px;font-weight:700;fill:#2b3844}
+      .note{font-size:10px;fill:#8794a1}
+    </style>
+  </defs>
+
+  <rect width="960" height="1180" fill="#f7f9fb"/>
+  <text x="40" y="46" font-size="24" font-weight="800" fill="#22303c">Object Reconstruction &amp; CAD Pipeline</text>
+  <text x="40" y="70" font-size="13" fill="#5b6b7a">phone video  →  isolated object mesh  →  parametric CAD assembly  ·  runbook in 3dReconstruction.md</text>
+
+  <!-- lane labels -->
+  <text x="30" y="128" class="lane" transform="rotate(-90 30 128)">STAGE A · MESH</text>
+  <text x="30" y="150" class="note" transform="rotate(-90 30 150)">reconstruct_object.sh</text>
+
+  <!-- ============ STAGE A : reconstruct_object.sh ============ -->
+  <!-- input -->
+  <rect x="360" y="92" width="240" height="46" rx="8" fill="#eef2f6" stroke="#c4d0da"/>
+  <text x="480" y="114" text-anchor="middle" class="ioT">object.mp4</text>
+  <text x="480" y="130" text-anchor="middle" class="io">hand-held 360° orbit, ~30–60 s</text>
+  <line x1="480" y1="138" x2="480" y2="162" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <!-- 1 frames -->
+    <rect x="120" y="164" width="720" height="58" rx="10" fill="url(#gA)"/>
+    <text x="140" y="188" class="title">1 · Frame extraction + sharpness filter</text>
+    <text x="140" y="208" class="sub">ffmpeg fps=10 → Laplacian-variance select → ~240 sharpest frames</text>
+    <rect x="748" y="176" width="76" height="18" rx="9" fill="#1b3d57"/><text x="786" y="189" text-anchor="middle" class="env">colmap+sugar</text>
+    <text x="748" y="214" class="sub">select_sharp.py</text>
+  </g>
+  <line x1="480" y1="222" x2="480" y2="240" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <!-- 2 colmap -->
+    <rect x="120" y="242" width="720" height="58" rx="10" fill="url(#gA)"/>
+    <text x="140" y="266" class="title">2 · COLMAP Structure-from-Motion</text>
+    <text x="140" y="286" class="sub">low SIFT peak-thresh · exhaustive match · mapper · auto largest-submodel · undistort</text>
+    <rect x="764" y="254" width="60" height="18" rx="9" fill="#1b3d57"/><text x="794" y="267" text-anchor="middle" class="env">colmap</text>
+    <text x="140" y="308" class="note">gate: aborts if &lt; 50% of frames register</text>
+  </g>
+  <line x1="480" y1="300" x2="480" y2="318" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <!-- 3 3dgs -->
+    <rect x="120" y="320" width="720" height="56" rx="10" fill="url(#gA)"/>
+    <text x="140" y="344" class="title">3 · Vanilla 3D Gaussian Splatting (7k it, −r 2)</text>
+    <text x="140" y="363" class="sub">half-res → 2.3 GB peak vs 3.9 GB full-res · require_vram gate</text>
+    <rect x="768" y="332" width="56" height="18" rx="9" fill="#1b3d57"/><text x="796" y="345" text-anchor="middle" class="env">sugar</text>
+  </g>
+  <line x1="480" y1="376" x2="480" y2="394" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <!-- 4 sugar -->
+    <rect x="120" y="396" width="720" height="64" rx="10" fill="url(#gA)"/>
+    <text x="140" y="420" class="title">4 · SuGaR: coarse reg → Poisson mesh → bind+refine → texture</text>
+    <text x="140" y="440" class="sub">SUGAR_MAX_IMG_SIZE derived from frame count → ~1 GB GT resident (never OOMs)</text>
+    <rect x="768" y="408" width="56" height="18" rx="9" fill="#1b3d57"/><text x="796" y="421" text-anchor="middle" class="env">sugar</text>
+    <text x="140" y="456" class="note">the long stage · ~2–3 h on a GTX 1650</text>
+  </g>
+  <line x1="480" y1="460" x2="480" y2="478" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <!-- 5 masks -->
+    <rect x="120" y="480" width="350" height="56" rx="10" fill="url(#gA)"/>
+    <text x="140" y="504" class="title">5 · U²-Net object masks</text>
+    <text x="140" y="523" class="sub">rembg per view · 240 silhouettes</text>
+    <rect x="410" y="492" width="48" height="18" rx="9" fill="#1b3d57"/><text x="434" y="505" text-anchor="middle" class="env">seg</text>
+  </g>
+  <g>
+    <!-- 6 carve -->
+    <rect x="490" y="480" width="350" height="56" rx="10" fill="url(#gA)"/>
+    <text x="510" y="504" class="title">6 · Visual-hull carve</text>
+    <text x="510" y="523" class="sub">project mesh into all masks · no bbox</text>
+    <rect x="784" y="492" width="40" height="18" rx="9" fill="#1b3d57"/><text x="804" y="505" text-anchor="middle" class="env">sugar</text>
+  </g>
+  <line x1="470" y1="508" x2="486" y2="508" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="665" y1="536" x2="665" y2="554" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="480" y1="536" x2="480" y2="554" stroke="#c4d0da" stroke-width="2"/>
+
+  <g>
+    <!-- 7 clean -->
+    <rect x="120" y="556" width="720" height="58" rx="10" fill="url(#gA)"/>
+    <text x="140" y="580" class="title">7 · Feature-preserving cleanup (v2)</text>
+    <text x="140" y="600" class="sub">component filter · rim/crease-frozen Taubin smoothing · no outlier erosion</text>
+    <rect x="768" y="568" width="56" height="18" rx="9" fill="#1b3d57"/><text x="796" y="581" text-anchor="middle" class="env">sugar</text>
+    <text x="140" y="612" class="note">clean_mesh_v2.py · carve_mesh.py</text>
+  </g>
+  <line x1="480" y1="614" x2="480" y2="636" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- STAGE A output -->
+  <rect x="330" y="638" width="300" height="52" rx="10" fill="#e7efe9" stroke="#3a8f6b" stroke-width="1.5"/>
+  <text x="480" y="662" text-anchor="middle" class="ioT">output/final/&lt;name&gt;_final.ply</text>
+  <text x="480" y="680" text-anchor="middle" class="io">isolated, cleaned object mesh · single component</text>
+
+  <!-- divider -->
+  <line x1="40" y1="712" x2="920" y2="712" stroke="#d7dee5" stroke-width="1" stroke-dasharray="4 4"/>
+  <text x="30" y="880" class="lane" transform="rotate(-90 30 880)">STAGE B · CAD</text>
+  <text x="30" y="902" class="note" transform="rotate(-90 30 902)">segment → fit → emit</text>
+
+  <line x1="480" y1="690" x2="480" y2="742" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ============ STAGE B : CAD ============ -->
+  <g>
+    <rect x="120" y="744" width="720" height="58" rx="10" fill="url(#gB)"/>
+    <text x="140" y="768" class="title">8 · Part segmentation (normal-aware region growing)</text>
+    <text x="140" y="788" class="sub">face-adjacency flood-fill → coplanar merge → antiparallel plane-pairs = plates</text>
+    <rect x="768" y="756" width="56" height="18" rx="9" fill="#1e4d3a"/><text x="796" y="769" text-anchor="middle" class="env">sugar</text>
+    <text x="140" y="800" class="note">segment_parts.py</text>
+  </g>
+  <line x1="480" y1="802" x2="480" y2="820" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect x="120" y="822" width="350" height="58" rx="10" fill="url(#gB)"/>
+    <text x="140" y="846" class="title">9 · Primitive abstraction</text>
+    <text x="140" y="866" class="sub">thickness-gated plates + cylinders</text>
+    <rect x="414" y="834" width="44" height="18" rx="9" fill="#1e4d3a"/><text x="436" y="847" text-anchor="middle" class="env">sugar</text>
+  </g>
+  <g>
+    <rect x="490" y="822" width="350" height="58" rx="10" fill="url(#gB)"/>
+    <text x="510" y="846" class="title">10 · Mate inference</text>
+    <text x="510" y="866" class="sub">coaxial · insertion · planar contact</text>
+    <rect x="784" y="834" width="44" height="18" rx="9" fill="#1e4d3a"/><text x="806" y="847" text-anchor="middle" class="env">sugar</text>
+  </g>
+  <text x="295" y="898" text-anchor="middle" class="note">fit_primitives.py → parts.json</text>
+  <line x1="480" y1="880" x2="480" y2="912" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect x="120" y="914" width="350" height="58" rx="10" fill="url(#gC)"/>
+    <text x="140" y="938" class="title">11 · Hole grid + scale</text>
+    <text x="140" y="958" class="sub">raster holes → 12.7 mm pitch → mm/unit</text>
+    <rect x="414" y="926" width="44" height="18" rx="9" fill="#5a3d19"/><text x="436" y="939" text-anchor="middle" class="env">sugar</text>
+  </g>
+  <g>
+    <rect x="490" y="914" width="350" height="58" rx="10" fill="url(#gC)"/>
+    <text x="510" y="938" class="title">12 · STEP emission</text>
+    <text x="510" y="958" class="sub">CadQuery/OCCT · named solids · holes cut</text>
+    <rect x="796" y="926" width="32" height="18" rx="9" fill="#5a3d19"/><text x="812" y="939" text-anchor="middle" class="env">cad</text>
+  </g>
+  <line x1="470" y1="943" x2="486" y2="943" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="295" y="990" text-anchor="middle" class="note">extract_holes.py</text>
+  <text x="665" y="990" text-anchor="middle" class="note">emit_step.py</text>
+  <line x1="665" y1="972" x2="665" y2="1004" stroke="#5b6b7a" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- STAGE B output -->
+  <rect x="360" y="1006" width="300" height="52" rx="10" fill="#f2ead9" stroke="#9a6a2f" stroke-width="1.5"/>
+  <text x="510" y="1030" text-anchor="middle" class="ioT">&lt;name&gt;_assembly.step</text>
+  <text x="510" y="1048" text-anchor="middle" class="io">named parametric solids · importable into any CAD</text>
+
+  <!-- env legend -->
+  <rect x="120" y="1086" width="720" height="66" rx="10" fill="#eef2f6" stroke="#c4d0da"/>
+  <text x="140" y="1108" font-size="12" font-weight="700" fill="#2b3844">Four isolated conda environments (no dependency can perturb the pinned torch 2.0.1 + pytorch3d stack)</text>
+  <g font-size="11" fill="#41505e">
+    <rect x="140" y="1120" width="12" height="12" rx="3" fill="#1b3d57"/><text x="158" y="1130">sugar — torch 2.0.1/cu118, pytorch3d, SuGaR, Open3D</text>
+    <rect x="470" y="1120" width="12" height="12" rx="3" fill="#1b3d57"/><text x="488" y="1130">colmap — COLMAP 3.13 + ffmpeg</text>
+    <rect x="140" y="1138" width="12" height="12" rx="3" fill="#1e4d3a"/><text x="158" y="1148">seg — rembg / U²-Net (onnxruntime)</text>
+    <rect x="470" y="1138" width="12" height="12" rx="3" fill="#5a3d19"/><text x="488" y="1148">cad — CadQuery / Open CASCADE</text>
+  </g>
+</svg>
