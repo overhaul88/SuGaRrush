@@ -1,6 +1,6 @@
 <div align="center">
 
-#  3D Reconstruction from MP4
+#  SuGaRrush: 3D Object Reconstruction 
 
 <font size="4">
 COLMAP&nbsp;→&nbsp;3DGS&nbsp;→&nbsp;SuGaR&nbsp;→&nbsp;visual-hull&nbsp;carve&nbsp;→&nbsp;primitive&nbsp;fitting&nbsp;→&nbsp;STEP
@@ -80,8 +80,7 @@ isolated conda environments so that no stage's dependencies can perturb the pinn
 
 ## Overview — the design decisions that matter
 
-Rather than repeat the code, this section states the non-obvious choices and *why* they are made.
-The full reasoning, with measurements, is in [`3dReconstruction.md`](../3dReconstruction.md).
+This section states the non-obvious choices and *why* they are made.
 
 **Run COLMAP on full frames, isolate the object afterwards.** A walk-around capture relies on
 background parallax for pose; masking the object before SfM starves COLMAP of correspondences.
