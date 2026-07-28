@@ -9,6 +9,8 @@ from sugar_scene.sugar_model import SuGaR, convert_refined_sugar_into_gaussians
 from sugar_scene.sugar_optimizer import OptimizationParams, SuGaROptimizer
 from sugar_scene.sugar_densifier import SuGaRDensifier
 from sugar_utils.loss_utils import ssim, l1_loss, l2_loss
+from sugar_utils.mask_loss import (mask_loss_enabled, mask_loss_weight, mask_ssim_erode,
+                                   build_mask_bank, masked_photometric_loss)
 
 from rich.console import Console
 import time
@@ -507,8 +509,17 @@ def refined_training(args):
         def loss_fn(pred_rgb, gt_rgb):
             return (1.0 - dssim_factor) * l1_loss(pred_rgb, gt_rgb) + dssim_factor * (1.0 - ssim(pred_rgb, gt_rgb))
     CONSOLE.print(f'Using loss function: {loss_function}')
-    
-    
+
+    # ====================Object-mask loss (loss-masked Gaussian isolation)====================
+    # When SUGAR_MASK_LOSS=1, restrict the photometric loss to the U2Net object silhouette so the
+    # mesh-bound Gaussians are supervised only on the object (no background pull at the edges).
+    # Visual-hull cage: the GT is black-composited in the camera loader (refine's render bg is
+    # already black), so a standard unmasked L1 keeps the mesh-bound Gaussians on the object.
+    use_object_mask_loss = mask_loss_enabled()
+    if use_object_mask_loss:
+        CONSOLE.print("Visual-hull cage ON: black-GT + unmasked L1.")
+
+
     # ====================Start training====================
     sugar.train()
     epoch = 0
@@ -587,7 +598,8 @@ def refined_training(args):
                 gt_rgb = gt_image.view(-1, sugar.image_height, sugar.image_width, 3)
                 gt_rgb = gt_rgb.transpose(-1, -2).transpose(-2, -3)
                     
-                # Compute loss 
+                # Compute loss
+                # Compute loss (standard L1+DSSIM; GT is black-composited so the background is caged)
                 loss = loss_fn(pred_rgb, gt_rgb)
                         
                 if enforce_entropy_regularization and iteration > start_entropy_regularization_from and iteration < end_entropy_regularization_at:

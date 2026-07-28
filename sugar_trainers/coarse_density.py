@@ -9,6 +9,8 @@ from sugar_scene.sugar_model import SuGaR
 from sugar_scene.sugar_optimizer import OptimizationParams, SuGaROptimizer
 from sugar_scene.sugar_densifier import SuGaRDensifier
 from sugar_utils.loss_utils import ssim, l1_loss, l2_loss
+from sugar_utils.mask_loss import (mask_loss_enabled, mask_loss_weight, mask_ssim_erode,
+                                   build_mask_bank, masked_photometric_loss)
 
 from rich.console import Console
 import time
@@ -413,6 +415,19 @@ def coarse_training_with_density_regularization(args):
         
     CONSOLE.print(f'\nSuGaR model has been initialized.')
     CONSOLE.print(sugar)
+
+    # ====================Spatial anchor (loss-masked isolation)====================
+    # Tether the free Gaussian centers to their INITIAL (pruned) positions with an L2 anchor so the
+    # geometric regularizers cannot scatter them and tear the object's topology. Decays over training
+    # so late surface-flattening is still possible. Active only when SUGAR_ANCHOR_LAMBDA>0 (the
+    # --gaussian-prune path); mu0 is re-sliced at the iter-9000 opacity prune to stay index-aligned.
+    anchor_lambda = float(os.environ.get('SUGAR_ANCHOR_LAMBDA', '0.0'))
+    anchor_until = int(os.environ.get('SUGAR_ANCHOR_UNTIL', '9000'))
+    use_anchor = anchor_lambda > 0.
+    if use_anchor:
+        anchor_mu0 = sugar.points.detach().clone()
+        CONSOLE.print(f"[anchor] L2 spatial anchor lambda={anchor_lambda} decaying to iter "
+                      f"{anchor_until} ({len(anchor_mu0)} points)")
     CONSOLE.print(f'Number of parameters: {sum(p.numel() for p in sugar.parameters() if p.requires_grad)}')
     CONSOLE.print(f'Checkpoints will be saved in {sugar_checkpoint_path}')
     
@@ -474,8 +489,27 @@ def coarse_training_with_density_regularization(args):
         def loss_fn(pred_rgb, gt_rgb):
             return (1.0 - dssim_factor) * l1_loss(pred_rgb, gt_rgb) + dssim_factor * (1.0 - ssim(pred_rgb, gt_rgb))
     CONSOLE.print(f'Using loss function: {loss_function}')
-    
-    
+
+    # ====================Object-mask loss (loss-masked Gaussian isolation)====================
+    # When SUGAR_MASK_LOSS=1, restrict the photometric loss to the U2Net object silhouette so the
+    # pruned object Gaussians are never penalised for the removed background and stay on the object.
+    # Visual-hull cage (gaussian-prune isolation): the GT is black-composited in the camera loader,
+    # so a STANDARD unmasked L1 already penalises any splat rendering non-black over a background
+    # pixel -> the Gaussians cannot drift/stretch into the void. Render bg is forced black to match.
+    use_object_mask_loss = mask_loss_enabled()
+    if use_object_mask_loss:
+        bg_tensor = torch.zeros(3, dtype=torch.float, device=nerfmodel.device)
+        CONSOLE.print("Visual-hull cage ON: black-GT + unmasked L1, render bg forced black.")
+    # Scale clamp: cap Gaussian log-scales at a quantile of the INITIAL pruned-cube scales so no
+    # splat can stretch into a depth spike. Snapshot the cap once (0 disables).
+    scale_clamp_q = float(os.environ.get('SUGAR_SCALE_CLAMP', '0.0'))
+    use_scale_clamp = use_object_mask_loss and scale_clamp_q > 0.
+    if use_scale_clamp:
+        with torch.no_grad():
+            log_scale_cap = torch.quantile(sugar._scales.detach().flatten().float(), scale_clamp_q).item()
+        CONSOLE.print(f"[cage] clamping Gaussian log-scales to q{scale_clamp_q} = {log_scale_cap:.3f}")
+
+
     # ====================Start training====================
     sugar.train()
     epoch = 0
@@ -511,6 +545,8 @@ def coarse_training_with_density_regularization(args):
                 prune_mask = (gaussian_densifier.model.strengths < prune_hard_opacity_threshold).squeeze()
                 gaussian_densifier.prune_points(prune_mask)
                 CONSOLE.print(f'Pruning finished: {sugar.n_points} gaussians left.')
+                if use_anchor:  # keep the anchor index-aligned with the surviving points
+                    anchor_mu0 = anchor_mu0[~prune_mask]
                 if regularize and iteration >= start_reset_neighbors_from:
                     sugar.reset_neighbors()
             
@@ -550,7 +586,7 @@ def coarse_training_with_density_regularization(args):
                 gt_rgb = gt_image.view(-1, sugar.image_height, sugar.image_width, 3)
                 gt_rgb = gt_rgb.transpose(-1, -2).transpose(-2, -3)
                     
-                # Compute loss 
+                # Compute loss (standard L1+DSSIM; the GT is black-composited so the background is caged)
                 loss = loss_fn(pred_rgb, gt_rgb)
                         
                 if enforce_entropy_regularization and iteration > start_entropy_regularization_from and iteration < end_entropy_regularization_at:
@@ -767,7 +803,13 @@ def coarse_training_with_density_regularization(args):
                 
                 if use_surface_mesh_normal_consistency_loss:
                     loss = loss + surface_mesh_normal_consistency_factor * mesh_normal_consistency(surface_mesh)
-            
+
+            # Spatial anchor: elastic L2 tether to the initial pruned positions, decaying to 0.
+            if use_anchor:
+                lam_t = anchor_lambda * max(0., 1. - iteration / anchor_until)
+                if lam_t > 0.:
+                    loss = loss + lam_t * ((sugar.points - anchor_mu0) ** 2).sum(-1).mean()
+
             # Update parameters
             loss.backward()
             
@@ -792,6 +834,9 @@ def coarse_training_with_density_regularization(args):
             
             # Optimization step
             optimizer.step()
+            if use_scale_clamp:  # truncate any splat trying to stretch into a spike
+                with torch.no_grad():
+                    sugar._scales.clamp_(max=log_scale_cap)
             optimizer.zero_grad(set_to_none = True)
             
             # Print loss

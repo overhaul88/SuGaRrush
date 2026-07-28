@@ -11,6 +11,61 @@ from sugar_utils.spherical_harmonics import SH2RGB
 
 from rich.console import Console
 
+def _mesh_topology(mesh):
+    """(n_components, genus) of a triangle mesh. genus = (2C - chi) / 2."""
+    n_comp = len(np.asarray(mesh.cluster_connected_triangles()[1]))
+    chi = mesh.euler_poincare_characteristic()
+    return n_comp, (2 * n_comp - chi) // 2
+
+
+def _poisson_reconstruct(pcd, spec, max_components=25, max_genus=8, lo=6, hi=9, console=None):
+    """Screened Poisson, with an optional search for an octree depth that yields clean topology.
+
+    A fixed depth tuned for a whole scene shatters an isolated object. Measured on object4's own
+    cloud (1.5M pts, spacing 0.00063, bbox side 1.19), varying ONLY the depth:
+
+        depth 6 (881 pts/cell):   9 components, genus  0
+        depth 7 (220 pts/cell):  17 components, genus -1
+        depth 8  (55 pts/cell):  63 components, genus  4
+        depth 9  (14 pts/cell): 370 components, genus 29   <- what a fixed depth was doing
+
+    Note this is NOT sample starvation: depth 9 still has ~14 samples per leaf, well above the few
+    that screened Poisson needs. The cause is that the level-set cloud carries genuine small-scale
+    structure -- the density field's own bumps and pinholes -- and a fine octree reproduces it as
+    tunnels while a coarse one averages it away. No spacing- or thickness-derived threshold
+    separates depth 7 from depth 9 (both were tried and both pick 9), so instead of predicting the
+    outcome from a proxy we MEASURE it: reconstruct, check the topology, step down until it is clean.
+
+    This matters far beyond a few stray handles. The shattered depth-9 mesh is 1.5M triangles, so it
+    must be decimated to the 500k target, which creates non-manifold edges, which
+    remove_non_manifold_edges deletes -- turning genus 29 into 13,173 boundary edges in 437
+    components. That lacy shell is what forced stage 9 to either carve the object away (pymeshfix,
+    -8.5%) or dome over it (Poisson re-fit, the bulge). At depth 7 the mesh is ~87k triangles, below
+    the decimation target, so that whole amplification chain never fires.
+
+    `spec` is an int-like string (single reconstruction, upstream behaviour) or "auto" (search).
+    """
+    spec = str(spec).strip().lower()
+    if spec != 'auto':
+        return o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=int(float(spec)))
+
+    best = None
+    for depth in range(hi, lo - 1, -1):
+        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=depth)
+        n_comp, genus = _mesh_topology(mesh)
+        ok = n_comp <= max_components and genus <= max_genus
+        if console is not None:
+            console.print(f"  poisson depth {depth}: {len(mesh.triangles):,} tris, "
+                          f"{n_comp} components, genus {genus}{'  <- accepted' if ok else ''}")
+        if ok:
+            return mesh, densities
+        best = (mesh, densities)
+    if console is not None:
+        console.print(f"  poisson: no depth in [{lo},{hi}] met "
+                      f"(components<={max_components}, genus<={max_genus}); using depth {lo}")
+    return best
+
+
 def extract_mesh_from_coarse_sugar(args):
     CONSOLE = Console(width=120)
     
@@ -40,8 +95,30 @@ def extract_mesh_from_coarse_sugar(args):
     # Mesh computation parameters
     fg_bbox_factor = 1.  # 1.
     bg_bbox_factor = 4.  # 4.
-    poisson_depth = 10  # 10 for most real scenes. 6 or 7 work well for most synthetic scenes
-    vertices_density_quantile = 0.1  # 0.1 for most real scenes. 0. works well for most synthetic scenes
+    # Poisson depth 10 over a whole scene is fine, but for an isolated ~1-unit object it is far too
+    # fine twice over: it wastes the octree on empty space (object4 gave a 6.0M-triangle mesh whose
+    # quadric decimation exhausted the 7.7 GB host and took the WSL VM down), and worse, the leaf
+    # cell shrinks to the sample spacing so Poisson fits the sampling pattern instead of the surface.
+    # SUGAR_POISSON_DEPTH accepts an int, or "auto" to search for a depth whose output topology is
+    # actually clean -- see _poisson_reconstruct for the measurements. SUGAR_SURFACE_MAX_POINTS caps
+    # the input cloud. Both default to upstream behaviour, so the carve path is unchanged.
+    poisson_depth = os.environ.get('SUGAR_POISSON_DEPTH', '10')  # 10 for most real scenes. 6 or 7 work well for most synthetic scenes
+    surface_max_points = int(os.environ.get('SUGAR_SURFACE_MAX_POINTS', 0))  # 0 = keep every surface point
+    # Voxel size for consolidating duplicate per-view observations before Poisson (0 = off, upstream
+    # behaviour). See the block that uses it for why this matters more than any later repair.
+    surface_voxel = float(os.environ.get('SUGAR_SURFACE_VOXEL', 0.0))
+    # Upstream passes std_ratio=20, which is so lenient that statistical outlier removal is a no-op.
+    surface_outlier_std = float(os.environ.get('SUGAR_SURFACE_OUTLIER_STD', 20.0))
+    # Screened Poisson emits a CLOSED surface; this trim is the only thing that reopens it. It
+    # deletes the lowest-density vertices to strip hallucinated far-field surface, which is surgical
+    # on a full scene because those vertices form coherent blobs there. On a small object already
+    # isolated in Gaussian space (--gaussian-prune) density is high nearly everywhere, so the bottom
+    # 10% are scattered specks across the whole surface and removing them punches lace: object4 came
+    # out with 13,173 boundary edges in 437 components (median hole 4 edges wide) out of a mesh that
+    # Poisson had handed over closed. Stage 9 then has to bridge that lace, and it domes over the
+    # worst patch. Set 0 for isolated objects; the fg-bbox filter, largest-component keep and stage-9
+    # --crop-ply already guard against far-field junk. Default stays upstream for the carve path.
+    vertices_density_quantile = float(os.environ.get('SUGAR_DENSITY_QUANTILE', 0.1))  # 0.1 for most real scenes. 0. works well for most synthetic scenes
     decimate_mesh = True
     clean_mesh = True
     project_mesh_on_surface_points = args.project_mesh_on_surface_points
@@ -369,6 +446,14 @@ def extract_mesh_from_coarse_sugar(args):
                 bg_colors = surface_colors[points_idx][bg_mask]
                 bg_normals = surface_normals[points_idx][bg_mask]
 
+                if surface_max_points > 0 and len(fg_points) > surface_max_points:
+                    # Uniform random thinning. Poisson reconstructs a field, so it only needs the
+                    # surface sampled densely enough for the octree at `poisson_depth`; the surplus
+                    # points cost RAM in the mesh that comes out, not accuracy.
+                    keep = torch.randperm(len(fg_points), device=fg_points.device)[:surface_max_points]
+                    CONSOLE.print(f"Subsampling foreground surface points: {len(fg_points)} -> {surface_max_points}")
+                    fg_points, fg_colors, fg_normals = fg_points[keep], fg_colors[keep], fg_normals[keep]
+
                 CONSOLE.print("Foreground points:", fg_points.shape, fg_colors.shape, fg_normals.shape)
                 CONSOLE.print("Background points:", bg_points.shape, bg_colors.shape, bg_normals.shape)
                 
@@ -381,16 +466,40 @@ def extract_mesh_from_coarse_sugar(args):
                     fg_pcd.colors = o3d.utility.Vector3dVector(fg_colors.double().cpu().numpy())
                     fg_pcd.normals = o3d.utility.Vector3dVector(fg_normals.double().cpu().numpy())
 
+                    # Consolidate the per-view observations before Poisson. Every surface patch is
+                    # ray-marched from dozens of the 499 views, so the cloud holds dozens of
+                    # near-duplicate samples per patch, each at a slightly different depth with its
+                    # own noisy normal. Poisson fits an implicit function to those contradictory
+                    # constraints and answers with a bubbly, high-genus isosurface: object4's raw
+                    # Poisson output had 204 components and genus ~538 before any trim or
+                    # decimation, and that -- not the later cleanup steps -- is where the lacy shell
+                    # comes from. voxel_down_sample averages position AND normal within each voxel,
+                    # collapsing those duplicates into one consistent sample. Off by default so the
+                    # carve path is unchanged.
+                    if surface_voxel > 0.:
+                        n_pre = len(fg_pcd.points)
+                        fg_pcd = fg_pcd.voxel_down_sample(voxel_size=surface_voxel)
+                        fg_pcd.normalize_normals()
+                        CONSOLE.print(f"Voxel-consolidated surface cloud @ {surface_voxel}: "
+                                      f"{n_pre:,} -> {len(fg_pcd.points):,} points")
+
                     # outliers removal
-                    cl, ind = fg_pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=20.)
+                    cl, ind = fg_pcd.remove_statistical_outlier(
+                        nb_neighbors=20, std_ratio=surface_outlier_std)
                     CONSOLE.print("Cleaning Point Cloud...")
                     fg_pcd = fg_pcd.select_by_index(ind)
 
                     CONSOLE.print("Finished computing points, colors and normals.")
 
+                    # Debug hook: dump the exact oriented cloud Poisson is about to fit, so its
+                    # thickness and normal consistency can be inspected offline.
+                    if os.environ.get('SUGAR_DUMP_SURFACE_PLY'):
+                        _p = os.environ['SUGAR_DUMP_SURFACE_PLY']
+                        o3d.io.write_point_cloud(_p, fg_pcd)
+                        CONSOLE.print(f"Dumped Poisson input cloud ({len(fg_pcd.points):,} pts) -> {_p}")
+
                     CONSOLE.print("Now computing mesh...")
-                    o3d_fg_mesh, o3d_fg_densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                        fg_pcd, depth=poisson_depth) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
+                    o3d_fg_mesh, o3d_fg_densities = _poisson_reconstruct(fg_pcd, poisson_depth, console=CONSOLE) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
 
                     if vertices_density_quantile > 0.:
                         CONSOLE.print("Removing vertices with low densities...")
@@ -416,9 +525,15 @@ def extract_mesh_from_coarse_sugar(args):
 
                     CONSOLE.print("Finished computing points, colors and normals.")
 
+                    # Debug hook: dump the exact oriented cloud Poisson is about to fit, so its
+                    # thickness and normal consistency can be inspected offline.
+                    if os.environ.get('SUGAR_DUMP_SURFACE_PLY'):
+                        _p = os.environ['SUGAR_DUMP_SURFACE_PLY']
+                        o3d.io.write_point_cloud(_p, fg_pcd)
+                        CONSOLE.print(f"Dumped Poisson input cloud ({len(fg_pcd.points):,} pts) -> {_p}")
+
                     CONSOLE.print("Now computing mesh...")
-                    o3d_bg_mesh, o3d_bg_densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                        bg_pcd, depth=poisson_depth) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
+                    o3d_bg_mesh, o3d_bg_densities = _poisson_reconstruct(bg_pcd, poisson_depth, console=CONSOLE) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
 
                     if vertices_density_quantile > 0.:
                         CONSOLE.print("Removing vertices with low densities...")
@@ -552,6 +667,14 @@ def extract_mesh_from_coarse_sugar(args):
                 bg_colors = surface_colors[points_idx][bg_mask]
                 bg_normals = surface_normals[points_idx][bg_mask]
 
+                if surface_max_points > 0 and len(fg_points) > surface_max_points:
+                    # Uniform random thinning. Poisson reconstructs a field, so it only needs the
+                    # surface sampled densely enough for the octree at `poisson_depth`; the surplus
+                    # points cost RAM in the mesh that comes out, not accuracy.
+                    keep = torch.randperm(len(fg_points), device=fg_points.device)[:surface_max_points]
+                    CONSOLE.print(f"Subsampling foreground surface points: {len(fg_points)} -> {surface_max_points}")
+                    fg_points, fg_colors, fg_normals = fg_points[keep], fg_colors[keep], fg_normals[keep]
+
                 CONSOLE.print("Foreground points:", fg_points.shape, fg_colors.shape, fg_normals.shape)
                 CONSOLE.print("Background points:", bg_points.shape, bg_colors.shape, bg_normals.shape)
                 
@@ -571,8 +694,7 @@ def extract_mesh_from_coarse_sugar(args):
                 CONSOLE.print("Finished computing points, colors and normals.")
 
                 CONSOLE.print("Now computing mesh...")
-                o3d_fg_mesh, o3d_fg_densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                    fg_pcd, depth=poisson_depth) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
+                o3d_fg_mesh, o3d_fg_densities = _poisson_reconstruct(fg_pcd, poisson_depth, console=CONSOLE) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
 
                 if vertices_density_quantile > 0.:
                     CONSOLE.print("Removing vertices with low densities...")
@@ -595,9 +717,15 @@ def extract_mesh_from_coarse_sugar(args):
 
                     CONSOLE.print("Finished computing points, colors and normals.")
 
+                    # Debug hook: dump the exact oriented cloud Poisson is about to fit, so its
+                    # thickness and normal consistency can be inspected offline.
+                    if os.environ.get('SUGAR_DUMP_SURFACE_PLY'):
+                        _p = os.environ['SUGAR_DUMP_SURFACE_PLY']
+                        o3d.io.write_point_cloud(_p, fg_pcd)
+                        CONSOLE.print(f"Dumped Poisson input cloud ({len(fg_pcd.points):,} pts) -> {_p}")
+
                     CONSOLE.print("Now computing mesh...")
-                    o3d_bg_mesh, o3d_bg_densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                        bg_pcd, depth=poisson_depth) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
+                    o3d_bg_mesh, o3d_bg_densities = _poisson_reconstruct(bg_pcd, poisson_depth, console=CONSOLE) #, width=0, scale=1.1, linear_fit=False)  # depth=10 should be the default value? 11 is good to (but it starts to make a big number of triangles)
 
                     if vertices_density_quantile > 0.:
                         CONSOLE.print("Removing vertices with low densities...")    

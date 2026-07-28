@@ -105,6 +105,10 @@ def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
         name = camera_transform['img_name']
         image_path = os.path.join(image_dir,  name + extension)
         
+        cam_cx = cam_cy = None
+        cam_object_mask = None
+        _focal_crop = os.environ.get("SUGAR_FOCAL_CROP", "0") == "1"
+        _focal_size = int(os.environ.get("SUGAR_FOCAL_SIZE", "480"))
         if load_gt_images:
             image = Image.open(image_path)
             if white_background:
@@ -114,18 +118,51 @@ def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
                 arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
                 image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
             orig_w, orig_h = image.size
-            downscale_factor = 1
-            if image_resolution in [1, 2, 4, 8]:
-                downscale_factor = image_resolution
-                # resolution = round(orig_w/(image_resolution)), round(orig_h/(image_resolution))
-            if max(orig_h, orig_w) > max_img_size:
-                additional_downscale_factor = max(orig_h, orig_w) / max_img_size
-                downscale_factor = additional_downscale_factor * downscale_factor
-            resolution = round(orig_w/(downscale_factor)), round(orig_h/(downscale_factor))
-            resized_image_rgb = PILtoTorch(image, resolution)
-            gt_image = resized_image_rgb[:3, ...]
-            
-            image_height, image_width = None, None
+            if _focal_crop:
+                # Focal crop: fill the VRAM-capped frame with the object. Crop a fixed S x S window at
+                # FULL resolution around the object's mask bbox. A crop shifts only the principal point
+                # (not the focal), so every camera keeps a uniform size + focal and only cx/cy differ --
+                # which the rasterizer represents via the projmatrix (see convert_camera_from_gs...).
+                S = int(min(_focal_size, orig_w, orig_h))
+                mstem = os.path.splitext(os.path.basename(image_path))[0]
+                mpath = os.path.join(source_path, "masks", mstem + ".png")
+                mk = None
+                if os.path.isfile(mpath):
+                    mk = np.array(Image.open(mpath).convert("L").resize((orig_w, orig_h), Image.NEAREST)) > 127
+                if mk is not None and mk.any():
+                    ys, xs = np.where(mk)
+                    ocx = int((xs.min() + xs.max()) / 2); ocy = int((ys.min() + ys.max()) / 2)
+                else:
+                    ocx, ocy = orig_w // 2, orig_h // 2
+                x0 = int(np.clip(ocx - S // 2, 0, max(0, orig_w - S)))
+                y0 = int(np.clip(ocy - S // 2, 0, max(0, orig_h - S)))
+                image = image.crop((x0, y0, x0 + S, y0 + S))
+                cam_cx = orig_w / 2. - x0            # principal point shifted into the crop
+                cam_cy = orig_h / 2. - y0
+                fov_x = focal2fov(fx, S); fov_y = focal2fov(fy, S)   # crop FoV (focal unchanged)
+                gt_image = PILtoTorch(image, (S, S))[:3, ...]
+                if mk is not None:
+                    cmk = mk[y0:y0 + S, x0:x0 + S].astype(np.uint8)
+                    cam_object_mask = cmk
+                    # Black-composite the GT (object on black). With an unmasked L1 this penalises any
+                    # splat that renders non-black over a background pixel -> a visual-hull cage that
+                    # stops Gaussians drifting/stretching into the void (the "hook").
+                    if os.environ.get("SUGAR_MASK_LOSS", "0") == "1":
+                        gt_image = gt_image * torch.from_numpy(cmk).to(gt_image.dtype)[None]
+                image_height, image_width = None, None
+            else:
+                downscale_factor = 1
+                if image_resolution in [1, 2, 4, 8]:
+                    downscale_factor = image_resolution
+                    # resolution = round(orig_w/(image_resolution)), round(orig_h/(image_resolution))
+                if max(orig_h, orig_w) > max_img_size:
+                    additional_downscale_factor = max(orig_h, orig_w) / max_img_size
+                    downscale_factor = additional_downscale_factor * downscale_factor
+                resolution = round(orig_w/(downscale_factor)), round(orig_h/(downscale_factor))
+                resized_image_rgb = PILtoTorch(image, resolution)
+                gt_image = resized_image_rgb[:3, ...]
+
+                image_height, image_width = None, None
         else:
             gt_image = None
             if image_resolution in [1, 2, 4, 8]:
@@ -140,7 +177,8 @@ def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
             colmap_id=id, image=gt_image, gt_alpha_mask=None,
             R=R, T=T, FoVx=fov_x, FoVy=fov_y,
             image_name=name, uid=id,
-            image_height=image_height, image_width=image_width,)
+            image_height=image_height, image_width=image_width,
+            cx=cam_cx, cy=cam_cy, object_mask=cam_object_mask,)
         
         cam_list.append(gs_camera)
 
@@ -154,6 +192,7 @@ class GSCamera(torch.nn.Module):
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda",
                  image_height=None, image_width=None,
+                 cx=None, cy=None, object_mask=None,
                  ):
         """
         Args:
@@ -207,6 +246,11 @@ class GSCamera(torch.nn.Module):
                 self.original_image *= gt_alpha_mask.to(self.data_device)
             else:
                 self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+
+        # Principal point (off-center under focal crop); defaults to the image center.
+        self.cx = float(cx) if cx is not None else self.image_width / 2.
+        self.cy = float(cy) if cy is not None else self.image_height / 2.
+        self.object_mask = object_mask  # cropped binary mask aligned to the (cropped) GT, or None
 
         self.zfar = 100.0  # TODO: Increase value
         self.znear = 0.01
@@ -278,48 +322,32 @@ def convert_camera_from_gs_to_pytorch3d(gs_cameras, device='cuda'):
     fy = torch.Tensor(np.array([fov2focal(gs_camera.FoVy, gs_camera.image_height) for gs_camera in gs_cameras])).to(device)
     image_height = torch.tensor(np.array([gs_camera.image_height for gs_camera in gs_cameras]), dtype=torch.int).to(device)
     image_width = torch.tensor(np.array([gs_camera.image_width for gs_camera in gs_cameras]), dtype=torch.int).to(device)
-    cx = image_width / 2.  # torch.zeros_like(fx).to(device)
-    cy = image_height / 2.  # torch.zeros_like(fy).to(device)
-    
+    cx = torch.Tensor(np.array([gs_camera.cx for gs_camera in gs_cameras])).to(device)
+    cy = torch.Tensor(np.array([gs_camera.cy for gs_camera in gs_cameras])).to(device)
+
     w2c = torch.zeros(N, 4, 4).to(device)
     w2c[:, :3, :3] = R.transpose(-1, -2)
     w2c[:, :3, 3] = T
     w2c[:, 3, 3] = 1
-    
+
     c2w = w2c.inverse()
     c2w[:, :3, 1:3] *= -1
     c2w = c2w[:, :3, :]
-    
+
     distortion_params = torch.zeros(N, 6).to(device)
     camera_type = torch.ones(N, 1, dtype=torch.int32).to(device)
 
-    # Pytorch3d-compatible camera matrices
+    # Pytorch3d-compatible camera matrices, built PER CAMERA so a focal crop's shifted principal
+    # point (cx, cy) is honored (the default path has cx=W/2, cy=H/2, i.e. no shift).
     # Intrinsics
-    image_size = torch.Tensor(
-        [image_width[0], image_height[0]],
-    )[
-        None
-    ].to(device)
-    scale = image_size.min(dim=1, keepdim=True)[0] / 2.0
-    c0 = image_size / 2.0
-    p0_pytorch3d = (
-        -(
-            torch.Tensor(
-                (cx[0], cy[0]),
-            )[
-                None
-            ].to(device)
-            - c0
-        )
-        / scale
-    )
-    focal_pytorch3d = (
-        torch.Tensor([fx[0], fy[0]])[None].to(device) / scale
-    )
+    image_size = torch.stack([image_width, image_height], dim=1).float().to(device)   # (N, 2)
+    scale = image_size.min(dim=1, keepdim=True)[0] / 2.0                               # (N, 1)
+    c0 = image_size / 2.0                                                              # (N, 2)
+    p0_pytorch3d = -(torch.stack([cx, cy], dim=1) - c0) / scale                        # (N, 2)
+    focal_pytorch3d = torch.stack([fx, fy], dim=1) / scale                             # (N, 2)
     K = _get_sfm_calibration_matrix(
-        1, "cpu", focal_pytorch3d, p0_pytorch3d, orthographic=False
+        N, "cpu", focal_pytorch3d, p0_pytorch3d, orthographic=False
     )
-    K = K.expand(N, -1, -1)
 
     # Extrinsics
     line = torch.Tensor([[0.0, 0.0, 0.0, 1.0]]).to(device).expand(N, -1, -1)
@@ -459,8 +487,8 @@ class CamerasWrapper:
         self.fy = torch.Tensor(np.array([fov2focal(gs_camera.FoVy, gs_camera.image_height) for gs_camera in gs_cameras])).to(device)
         self.height = torch.tensor(np.array([gs_camera.image_height for gs_camera in gs_cameras]), dtype=torch.int).to(device)
         self.width = torch.tensor(np.array([gs_camera.image_width for gs_camera in gs_cameras]), dtype=torch.int).to(device)
-        self.cx = self.width / 2.  # torch.zeros_like(fx).to(device)
-        self.cy = self.height / 2.  # torch.zeros_like(fy).to(device)
+        self.cx = torch.Tensor(np.array([gs_camera.cx for gs_camera in gs_cameras])).to(device)
+        self.cy = torch.Tensor(np.array([gs_camera.cy for gs_camera in gs_cameras])).to(device)
         
         w2c = torch.zeros(N, 4, 4).to(device)
         w2c[:, :3, :3] = R.transpose(-1, -2)
