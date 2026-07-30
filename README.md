@@ -4,7 +4,7 @@
 
 ### Fast SuGaR for object reconstruction
 
-<img src="./docs/renders/architecture_main.png" alt="Architecture" width="400"/>
+<img src="./docs/renders/architecture_main.png" alt="Architecture" width="720"/>
 
 </div>
 
