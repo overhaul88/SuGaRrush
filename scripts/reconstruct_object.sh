@@ -3,8 +3,10 @@
 #
 #   ./scripts/reconstruct_object.sh --video inputs/object2.mp4 --name object2
 #   ./scripts/reconstruct_object.sh --video inputs/object2.mp4 --name object2 --texture
+#   ./scripts/reconstruct_object.sh --video inputs/object2.mp4 --name object2 --bilateral
 #
-# Runs frame extraction -> COLMAP SfM -> vanilla 3DGS -> U2Net masks -> SuGaR ->
+# Runs frame extraction -> sharp-frame selection (optional bilateral filter) -> COLMAP SfM ->
+# vanilla 3DGS -> U2Net masks -> SuGaR ->
 # visual-hull carve -> cleanup -> watertight safeguard -> vertex colors, producing a
 # WATERTIGHT, vertex-coloured isolated object mesh at output/final/<name>_final.ply.
 #
@@ -47,6 +49,10 @@ SCENES_ROOT="$SUGAR_DIR/scenes"
 
 VIDEO=""; NAME=""; FPS=10; TARGET=240; REFINE=short; NVERT=500000
 GS_ITERS=7000; KEEP_RATIO=0.85; FORCE=0
+# Optional first-stage experiment: apply a mild bilateral filter only after sharp-frame selection.
+# Off by default because spatial denoising can also suppress the high-frequency signal used by SIFT,
+# 3DGS and texture reconstruction. OpenCV lives in the isolated seg environment.
+BILATERAL=0; BILATERAL_DIAMETER=3; BILATERAL_SIGMA_COLOR=10; BILATERAL_SIGMA_SPACE=1; BILATERAL_JPEG_QUALITY=95
 # Stage 10 (opt-in): bake an observation-only texture atlas from the source frames onto the
 # final mesh (weighted-median project-and-blend). Off by default so the geometry/CAD path is
 # unchanged and needs no extra deps. Enable with --texture (needs xatlas + trimesh in env sugar).
@@ -75,7 +81,10 @@ RHO_KEEP_RATIO=0.75
 # gradients keep full magnitude (weight 1.0), SSIM eroded to keep its window off the mask boundary,
 # an L2 anchor tethering Gaussians to their pruned positions (prevents topology tearing), and an
 # S^2 focal crop that fills the VRAM-capped frame with the object (~4x object resolution).
-MASK_LOSS_WEIGHT=1.0; SSIM_ERODE=5; ANCHOR_LAMBDA=0.2; ANCHOR_UNTIL=15000; FOCAL_CROP=1; FOCAL_SIZE=384
+MASK_LOSS_WEIGHT=1.0; SSIM_ERODE=5; ANCHOR_LAMBDA=0.2; ANCHOR_UNTIL=15000; FOCAL_CROP=1
+# Environment override is useful for controlled A/B tests against an older run whose effective
+# crop size is already recorded in its log. Normal CLI runs retain the validated 384 px default.
+FOCAL_SIZE="${SUGAR_FOCAL_SIZE_OVERRIDE:-384}"
 # Visual-hull cage: black-composite the GT + clamp Gaussian scales at this quantile of the initial
 # pruned-cube scales, so splats cannot stretch into depth spikes ("hook"). 0 disables the clamp.
 SCALE_CLAMP=0.98
@@ -144,6 +153,11 @@ while [[ $# -gt 0 ]]; do
     --name) NAME="$2"; shift 2;;
     --fps) FPS="$2"; shift 2;;
     --target) TARGET="$2"; shift 2;;
+    --bilateral) BILATERAL=1; shift;;
+    --bilateral-diameter) BILATERAL_DIAMETER="$2"; shift 2;;
+    --bilateral-sigma-color) BILATERAL_SIGMA_COLOR="$2"; shift 2;;
+    --bilateral-sigma-space) BILATERAL_SIGMA_SPACE="$2"; shift 2;;
+    --bilateral-jpeg-quality) BILATERAL_JPEG_QUALITY="$2"; shift 2;;
     --refine) REFINE="$2"; shift 2;;
     --vertices) NVERT="$2"; shift 2;;
     --sdf-samples) SDF_SAMPLES="$2"; shift 2;;
@@ -261,8 +275,17 @@ if is_done frames; then say "1/12 frames (cached: $(ls "$SCENE/input" | wc -l))"
   in_env colmap ffmpeg -loglevel error -i "$VIDEO" -qscale:v 1 -qmin 1 \
       -vf "fps=$FPS" "$SCENE/_allframes/%05d.jpg" || die "ffmpeg extraction"
   info "extracted $(ls "$SCENE/_allframes" | wc -l) frames at ${FPS} fps"
-  in_env sugar python scripts/select_sharp.py --src "$SCENE/_allframes" \
-      --dst "$SCENE/input" --target "$TARGET" 2>&1 | tee "$LOGS/frames.log" | grep -E "Keeping|sharpness" || true
+  SELECT_ENV=sugar
+  SELECT_ARGS=(--src "$SCENE/_allframes" --dst "$SCENE/input" --target "$TARGET")
+  if [[ "$BILATERAL" == "1" ]]; then
+    SELECT_ENV=seg
+    SELECT_ARGS+=(--bilateral --bilateral-diameter "$BILATERAL_DIAMETER"
+      --bilateral-sigma-color "$BILATERAL_SIGMA_COLOR"
+      --bilateral-sigma-space "$BILATERAL_SIGMA_SPACE"
+      --jpeg-quality "$BILATERAL_JPEG_QUALITY")
+  fi
+  in_env "$SELECT_ENV" python scripts/select_sharp.py "${SELECT_ARGS[@]}" \
+      2>&1 | tee "$LOGS/frames.log" | grep -E "Keeping|sharpness|bilateral" || true
   N=$(ls "$SCENE/input" | wc -l); (( N >= 40 )) || die "only $N frames kept"
   rm -rf "$SCENE/_allframes"          # ~1 GB of intermediates, not needed again
   mark_done frames
@@ -687,6 +710,10 @@ printf '\n\033[1;32m>>> TOTAL PIPELINE WALL-CLOCK: %s (%d frames, refine=%s, sdf
   "$(fmt_hms $SECONDS)" "$NREG" "$REFINE" "$SDF_SAMPLES"
 printf '\033[1;32m>>> MESH: output/final/%s_final.ply%s\033[0m\n' \
   "$NAME" "$([[ "$VERTEX_COLOR" == "1" ]] && echo ' (closed manifold, vertex-coloured)' || echo ' (closed manifold)')"
-[[ -n "${TEX_COV:-}" ]] && printf '\033[1;32m>>> TEXTURE: %s  ->  output/final/%s/visual/%s_textured.glb\033[0m\n' \
-  "$TEX_COV" "$NAME" "$NAME"
-[[ -n "${COLL_URDF:-}" ]] && printf '\033[1;32m>>> COLLISION: %s\033[0m\n' "$COLL_URDF"
+if [[ -n "${TEX_COV:-}" ]]; then
+  printf '\033[1;32m>>> TEXTURE: %s  ->  output/final/%s/visual/%s_textured.glb\033[0m\n' \
+    "$TEX_COV" "$NAME" "$NAME"
+fi
+if [[ -n "${COLL_URDF:-}" ]]; then
+  printf '\033[1;32m>>> COLLISION: %s\033[0m\n' "$COLL_URDF"
+fi

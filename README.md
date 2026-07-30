@@ -439,6 +439,15 @@ bash scripts/reconstruct_object.sh --video inputs/myobject.mp4 --name myobject
 
 That runs the conservative default: carve-based isolation, short refinement, geometry only.
 
+**Optional bilateral preprocessing.** Pass `--bilateral` to filter only the selected sharp frames
+before they enter COLMAP; it is off by default and runs after viewpoint selection. In the
+[`object10` long-refine A/B test](./docs/notes/hard_bilateral_object10_benchmark.md), a hard setting
+(`d=7`, `sigmaColor=50`, `sigmaSpace=3`) cut SIFT features by 38.79 %, registered 238/240 rather than
+240/240 cameras, reduced 3DGS PSNR by 0.918 dB, and lowered texture coverage from 68.16 % to 60.79 %.
+The final mesh remained close (0.53 % mean and 1.29 % p95 of the aligned control diagonal), but the
+hard filter offered no overall quality gain, so bilateral filtering remains opt-in and that setting
+is not recommended as a global default.
+
 ### Recommended full run
 
 ```bash
@@ -504,6 +513,11 @@ below ~700 MB.
 | `--fps` | `10` | extraction rate *before* sharpness filtering. Over-extract: `select_sharp.py` keeps the sharpest frame per sliding window, so a higher fps only improves the choice |
 | `--target` | `240` | sharp frames to keep. More frames = better hull and coverage, but a *lower* derived SuGaR resolution (H2) |
 | `--gs-iters` | `7000` | vanilla 3DGS iterations |
+| `--bilateral` | off | bilateral-filter selected frames before they enter the scene directory |
+| `--bilateral-diameter` | `3` | positive odd OpenCV filter-neighborhood diameter |
+| `--bilateral-sigma-color` | `10` | color sigma in 8-bit intensity levels |
+| `--bilateral-sigma-space` | `1` | spatial sigma in pixels |
+| `--bilateral-jpeg-quality` | `95` | JPEG quality for filtered selected frames |
 
 ### Masked SuGaR (Part I)
 
