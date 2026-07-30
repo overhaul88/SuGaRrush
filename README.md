@@ -4,16 +4,7 @@
 
 ### Fast SuGaR for object reconstruction
 
-<font size="4">
-video&nbsp;→&nbsp;COLMAP&nbsp;→&nbsp;3DGS&nbsp;→&nbsp;<b>masked SuGaR</b>&nbsp;→&nbsp;ρ-filter&nbsp;→&nbsp;hull completion&nbsp;→&nbsp;watertight solid&nbsp;→&nbsp;texture&nbsp;·&nbsp;collision
-</font>
-
-<img src="./docs/gifs/object4_input.gif" alt="hand-held input video" width="270"/>
-<img src="./docs/gifs/object4_gs_animation.gif" alt="3D Gaussian splats" width="270"/>
-<img src="./docs/renders/object4_final_1.png" alt="final textured mesh" width="270"/>
-
-<b>A hand-held phone video (left) becomes a Gaussian-splat scene (centre), then an isolated,<br>
-watertight, textured mesh of the object alone (right) — on a 4 GB GTX 1650.</b>
+<img src="./docs/renders/architecture_main.png" alt="Architecture" width="400"/>
 
 </div>
 
