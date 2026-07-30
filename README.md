@@ -12,67 +12,85 @@
 
 ## Abstract
 
-_SuGaRrush turns a single hand-held phone video of an object into a **watertight, textured,
-physics-ready mesh**. It extends [SuGaR](https://github.com/Anttwo/SuGaR) (Guédon & Lepetit,
-CVPR 2024) with two contributions that give the project its name — **making SuGaR fast enough,
-and focused enough, to reconstruct one object rather than a whole scene**:_
+_SuGaRrush turns one hand-held phone video into an isolated, closed, textured and physics-ready
+object mesh. The pipeline begins with full-scene COLMAP structure-from-motion and 3D Gaussian
+Splatting because the background supplies the feature correspondences and parallax needed for
+reliable camera poses. Object isolation is deliberately delayed until those Gaussians have been
+trained: U²-Net labels the foreground in every registered view, camera-mask agreement prunes the
+scene in Gaussian space, and only the surviving object representation is handed to SuGaR for
+surface alignment and Poisson meshing._
 
-1. **Masked SuGaR Modelling** — the object is isolated in *Gaussian space* before surface
-   optimization, and SuGaR is then trained under a mask-restricted, area-normalized, focal-cropped
-   objective. Naively pruning Gaussians fails badly (SuGaR re-optimizes its input and the object
-   smears across the scene); the fixes that make it work are the substance of Part I.
-2. **SDF-regularization optimization** — the phase that consumed **92 % of a 10.2 h pipeline** is
-   memory-bandwidth bound and linear in a hard-coded Monte-Carlo sample count. Cutting it 20×
-   (1,000,000 → 50,000), made safe by error-guided sampling, leaves the final mesh agreeing to
-   **0.31 % of its own bounding-box diagonal**. Part II is the profiling → hypothesis → validation
-   arc.
+_That ordering creates its own failure. SuGaR re-optimizes the pruned Gaussians against the source
+images, so an ordinary photometric loss pulls them into spikes, sheets and hooks as they try to
+explain the deleted background. SuGaRrush replaces that objective with black-composited
+foreground supervision, area-normalized masked loss, an early positional anchor and a focal crop:
+the object remains free to explain its observed appearance, but geometry rendered beyond the
+silhouette is actively penalized. After meshing, camera-derived observation confidence removes
+faces that were never supported; a voted visual hull fills the resulting wound from silhouettes;
+MeshFix seals the remaining shell; vertex colour is sampled from the surviving Gaussians; and an
+optional texture atlas is rebaked from the original undistorted views. CoACD can then decompose the
+closed solid into collision parts and a URDF._
 
-_Everything is **observation-only**: no generative prior, no learned completion. Geometry no camera
-saw is either reported as unobserved or filled from the **visual hull**, which is a deterministic
-function of the silhouettes and therefore adds nothing the cameras did not supply._
-
-_The whole thing is developed against a deliberately hostile budget — a **4 GB GTX 1650 with 7.7 GB
-of system RAM under WSL2** — which is why the VRAM ceiling is *derived* from frame count rather than
-fixed, and why the mesh-extraction depth is *measured* rather than assumed._
+_Nothing in the completion path is generative. U²-Net labels pixels, the visual hull is a
+deterministic function of those labels, and unseen regions remain explicitly distinguishable from
+measured surface. The implementation was developed on a **4 GB GTX 1650 with 7.7 GB system RAM**:
+error-guided SDF sampling reduces SuGaR's one-million-point Monte Carlo budget to 50,000, the image
+resolution is derived from measured free VRAM and frame count, and 384 px focal crops spend that
+limited budget on the object rather than the surrounding scene._
 
 ---
 
-## Results at a glance
+## Results
 
-| | **object4** Rubik's cube | **object6** bobblehead | **object7** Meccano forklift | **object3** glass bowl |
+| | **object6** Spider-Man | **object9** Rubik's Cube | **object3** Glass bowl | **object8** Mecanum wheel |
 |:--|:--:|:--:|:--:|:--:|
-| surface | matte, high-texture | glossy painted | metal + foam, **thin & perforated** | **transparent** |
-| frames kept | 500 | 236 | 400 | 240 |
-| COLMAP registration | 499 / 500 | 236 / 236 | **400 / 400** | **240 / 240** |
-| vanilla 3DGS PSNR | 29.95 dB | 30.18 dB | 30.52 dB | 31.87 dB |
-| isolation path | masked SuGaR | masked SuGaR | masked SuGaR | carve |
-| final mesh | 101,096 tris | 116,240 tris | 127,696 tris | 16,308 tris |
-| topology | **euler 2 · genus 0** | **euler 2 · genus 0** | euler −40 | euler −16 · genus 9 |
-| texture coverage | 77.46 % | **90.29 %** | 63.98 % | 89.42 % |
-| **texture PSNR** | 18.77 dB | **24.02 dB** | 14.98 dB | 18.42 dB |
-| outcome | full detail | full detail | masts lost at closure | fluted exterior only |
-
-**Capture quality is not the predictor of success.** Every capture metric — sharpness, 3DGS PSNR,
-registration — is *highest* on the two hardest subjects (glass bowl, forklift), yet those are the two
-that fail. Diffuse and textured surfaces reconstruct; glossy struggles; transparent recovers only its
-opaque frosted regions; **thin spindly geometry survives meshing but is destroyed by hull
-completion** (see [Limitations](#honest-limitations)). This is material and geometric physics, not a
-tunable.
+| surface | glossy painted figure | matte, high-texture | transparent, refractive | painted, concave, repeated rollers |
+| registered views | 236 | 499 | 240 | 500 |
+| isolation path | masked SuGaR | masked SuGaR | mesh-space carve | masked SuGaR |
+| object Gaussians after prune | 25,226 | 48,194 | — | 30,853 |
+| final mesh | 116,240 tris | 145,316 tris | 16,308 tris | 139,312 tris |
+| final topology | Euler 2 | Euler 2 | Euler −16 | Euler 0 |
+| texture coverage | **90.29 %** | 83.86 % | 89.42 % | **90.73 %** |
+| texture PSNR | **24.02 dB** | 16.85 dB | 18.42 dB | 17.82 dB |
+| measured outcome | closed body; fine costume detail lost | strongest geometry; rounded and pillowed | lumpy partial shell | silhouette recovered; rollers fused |
 
 <div align="center">
-<img src="./docs/renders/object4_final_2.png" alt="Rubik's cube mesh" width="240"/>
-<img src="./docs/renders/object2_final_1.png" alt="bobblehead mesh" width="240"/>
-<img src="./docs/renders/object3_final_1.png" alt="glass bowl mesh" width="240"/>
+<img src="./docs/renders/object6_final_1.png" alt="object6 Spider-Man final mesh" width="220"/>
+<img src="./docs/renders/object9_final_1.png" alt="object9 Rubik's Cube final mesh" width="220"/>
+<img src="./docs/renders/object3_final_1.png" alt="object3 glass bowl final mesh" width="220"/>
+<img src="./docs/renders/object8_final_1.png" alt="object8 Mecanum wheel final mesh" width="220"/>
 <br>
-<b>Left → right:</b> matte Rubik's cube (full detail) · glossy bobblehead (clean) ·
-transparent glass bowl (opaque regions only).
+<b>Left → right:</b> Spider-Man · Rubik's Cube · glass bowl · Mecanum wheel.
 </div>
+
+**Spider-Man (`object6`).** The pipeline produces a closed figure with the large-scale body and
+paint regions intact, but ceiling reflections are baked into the head texture. The crown is pushed
+in where the source video loses the top of the head for many views, and the costume web lines and
+hands are below the recoverable detail scale at the derived image resolution.
+
+**Rubik's Cube (`object9`).** This is the strongest geometric result: the object is recognizably
+cubic, the sticker colours and black separators land in the correct regions, and the final shell has
+Euler 2. The reconstruction still has no semantic notion of a cube, so edges are rounded, faces are
+slightly pillowed, and a fused lump remains on the yellow face where photometric and silhouette
+evidence failed to reject it.
+
+**Glass bowl (`object3`).** Transparency breaks the assumption that a surface point has a
+view-consistent appearance: much of the radiance belongs to whatever lies behind the bowl, so 3DGS
+has no stable density level set to mesh. The exterior ridges, rim diameter and approximate wall
+thickness survive, but the result is lumpy, mostly textureless and topologically noisy, including a
+see-through hole.
+
+**Mecanum wheel (`object8`).** The outer diameter, disc silhouette and yellow/black material split
+are recovered as a closed solid. The axle through-hole is absent because too few views constrain it,
+and the gaps between angled rollers are never empty in the orbit silhouettes—another roller lies
+behind them—so visual-hull voting and screened Poisson fuse the rollers into one continuous barrel
+mass.
 
 ---
 
 ## The pipeline
 
-One command, twelve stages, four conda environments. Every stage writes a `.done_<stage>` marker, so
+One command, twelve stages, three runtime environments. Every stage writes a `.done_<stage>` marker, so
 a re-run resumes from where it stopped rather than recomputing.
 
 | # | Stage | Script / tool | Env | Output |
@@ -92,352 +110,184 @@ a re-run resumes from where it stopped rather than recomputing.
 | 11 | texture *(opt-in)* | `bake_texture.py` | sugar | `output/final/<name>/visual/` |
 | 12 | collision *(opt-in)* | `make_collision.py` (CoACD) | sugar | `output/final/<name>/collision/` |
 
-Stages **5–7b in bold** are this project's additions and are documented below. Stage 7 has an
-alternative for the default path: when `--gaussian-prune` is *off*, isolation happens in mesh space
-via `carve_mesh.py` instead.
-
-### Measured wall-clock — object7, 400 frames, from scratch
-
-| Stage | Time | Share |
-|:--|--:|--:|
-| 1 · frames (1,169 extracted → 400 kept) | 0:32 | 0.3 % |
-| 2 · COLMAP SfM | 25:36 | 12.1 % |
-| **3 · vanilla 3DGS** | **2:25:51** | **69.2 %** |
-| 4 · U²-Net masks | 4:25 | 2.1 % |
-| 5 · Gaussian prune | 0:28 | 0.2 % |
-| **6 · masked SuGaR** (coarse + Poisson + long refine) | **22:07** | **10.5 %** |
-| 7 · ρ filter | 0:08 | 0.1 % |
-| 7b · hull completion | 5:38 | 2.7 % |
-| 9 · watertight closure | 1:19 | 0.6 % |
-| 10 · vertex colour | 0:04 | — |
-| 11 · texture bake | 1:44 | 0.8 % |
-| 12 · CoACD collision | 2:00 | 0.9 % |
-| **Total** | **3:30:53** | |
-
-**This profile is the point of Part II.** Before the SDF optimization, SuGaR was 92 % of wall-clock
-and the pipeline took over 10 hours. It is now 10.5 %, and **vanilla 3DGS is the new dominant cost** —
-the honest next target.
+Stages **5–7b in bold** are this project's additions; their development and implementation are
+described in [`docs/notes/Dirac_writeup.pdf`](./docs/notes/Dirac_writeup.pdf). When
+`--gaussian-prune` is off, stage 7 uses `carve_mesh.py` to isolate the object in mesh space instead.
 
 ---
 
-# Part I — Masked SuGaR Modelling
+# Running the pipeline on your system
 
-The default SuGaR reconstructs the *whole scene*, and the object is cut out afterwards. That works,
-but it spends the entire mesh budget on floor and background, and the object inherits whatever
-resolution is left. Masked SuGaR instead isolates the object **before** surface optimization, so the
-full budget lands on the subject.
+The launcher uses three isolated conda environments—`sugar`, `colmap`, and `seg`—because changing
+COLMAP or ONNX dependencies inside the pinned PyTorch/PyTorch3D environment can break the CUDA
+extensions. The checked-in `environment.yml` creates the reconstruction base; the active geometry
+extras and the two utility environments must be installed separately as shown below.
 
-<div align="center">
-<img src="./docs/gifs/object6_gs_pruned_animation.gif" alt="pruned object-only Gaussians" width="330"/>
-<img src="./docs/gifs/object5_gs_pruned_animation.gif" alt="pruned object-only Gaussians" width="330"/>
-<br>
-<b>Stage 5 output:</b> the trained Gaussian scene reduced to the object alone — 4.7 % of the
-Gaussians survive, and the scene extent collapses by 40–70×.
-</div>
+<details>
+<summary><b>1 · System, GPU and compiler prerequisites</b></summary>
 
-### Why this is not simply "prune, then train"
+The tested platform is Linux under WSL2 with an NVIDIA GTX 1650 (4 GB VRAM), CUDA 11.8, GCC/G++ 11,
+Miniforge and approximately 8 GB system RAM. A newer NVIDIA driver is fine, but the CUDA toolkit
+used to compile the extensions must match the PyTorch CUDA 11.8 stack.
 
-Pruning the Gaussians and handing them to stock SuGaR **fails catastrophically**, and the failure is
-instructive: SuGaR *re-optimizes its input Gaussians* against the ground-truth images
-(`train.py` → `coarse_density.py`, `learnable_positions=True`). With the background Gaussians deleted
-but the background still present in the GT images, the photometric loss drags the surviving object
-Gaussians outward to explain pixels they cannot represent.
+Install or provide:
 
-Measured on object4: input extent ~1 unit → **mesh extent ~22 units**, PCA shape ratio
-[1, 0.22, 0.13], texture PSNR **8.6 dB** — garbage.
+- an NVIDIA driver visible through `nvidia-smi`;
+- CUDA toolkit 11.8, including `nvcc`;
+- GCC and G++ 11;
+- Git with submodule support;
+- Miniconda, Miniforge or Mambaforge;
+- enough disk space for conda environments, U²-Net weights, scenes and checkpoints.
 
-<div align="center">
-<img src="./docs/renders/object4_overflow_1.png" alt="Gaussian overflow failure" width="330"/>
-<img src="./docs/renders/object4_overflow_2.png" alt="Gaussian overflow failure" width="330"/>
-<br>
-<b>The overflow failure.</b> A pruned Rubik's cube, re-optimized under an unmasked loss: the
-Gaussians stretch into depth spikes ("the hook") chasing background they can no longer represent.
-</div>
+Verify the toolchain before creating any environment:
 
-Four mechanisms, applied together, are what make masked training actually work.
-
-### 1 · The prune — two ordered admissibility tests
-
-`prune_gaussians.py` decides which Gaussians are the object. It applies **two tests that target
-disjoint failure modes**, and the order matters:
-
-| test | question it asks | what it removes |
-|:--|:--|:--|
-| **agreement** `n_in / n_frust ≥ 0.6` | of the cameras that looked, did they call it object? | floor, table, backdrop |
-| **support** `n_frust ≥ σ·N` | was this location interrogated at all? | distant floaters |
-
-Neither subsumes the other. The table under the object has *full* support and fails agreement; a
-floater seven object-diagonals away has *high* agreement and fails support — because `n_frust` counts
-only views where the centre lands inside the image rectangle, so a distant point is judged by the
-handful of cameras that happened to frame it. On object6 that let 477 centres survive at agreement
-**0.604**, clearing the 0.60 threshold by 0.004.
-
-**σ is measured, not chosen.** Frame support is bimodal for an orbit capture — the operator keeps the
-subject framed, so background drifts out of frame as the camera swings — and `calibrate_support()`
-cuts in the widest *empty* band of the support histogram:
-
-```
-object7, 400 views, support histogram (agreement-passing Gaussians only)
-
-  0.00–0.05      31                                              ← junk
-  0.10–0.15   1,452  ##                                          ← junk
-  0.15–0.90       0                                              ← empty: 75 % of the range
-  0.90–0.95     692  #                                           ← object
-  0.95–1.00  33,896  ##############################################  ← object
+```bash
+nvidia-smi
+/usr/local/cuda-11.8/bin/nvcc --version
+gcc-11 --version
+conda --version
 ```
 
-| | object6 | object7 |
-|:--|:--:|:--:|
-| Gaussians in | 541,096 | 681,857 |
-| kept | 25,226 (4.7 %) | 34,588 (5.1 %) |
-| empty band → σ | 0.240–0.660 → **0.450** | 0.150–0.850 → **0.500** |
-| junk removed | 477 | 1,483 |
-| object geometry lost | **0** | **0** |
-| extent before | [94.3, 48.7, 97.1] | [74.3, 51.8, 65.5] |
-| extent after | **[0.88, 1.47, 0.90]** | **[0.64, 1.10, 0.93]** |
+`env.sh` is configured for CUDA 11.8, GCC 11, `MAX_JOBS=2`, and Turing compute capability
+`7.5+PTX`. Change `CUDA_HOME`, `CC`, `CXX`, and `TORCH_CUDA_ARCH_LIST` there if your toolkit or GPU
+differs. Building for the wrong architecture can surface later as a misleading CUDA out-of-memory
+error; excessive parallel compilation can exhaust system RAM.
 
-The gap is *structural*, not a lucky threshold — it reproduces across two unrelated objects and
-scenes. Conditioning on agreement first is essential: on the raw cloud every support bin is occupied,
-because background exists at every distance, and the calibration correctly refuses and falls back.
+</details>
 
-### 2 · The masked objective (`sugar_utils/mask_loss.py`)
+<details>
+<summary><b>2 · Clone the repository and initialize submodules</b></summary>
 
-Restricting the photometric loss to the silhouette zeroes background gradients. Two refinements make
-it viable on a *small* object:
-
-- **Area-normalized L1** — `L1 = Σ(M·|I−Î|) / (Σ(M)·C)`. A plain `.mean()` divides by the whole
-  tensor, so with the object at ~5 % of a VRAM-capped frame the object gradients are divided by ~20
-  and starve. Normalizing by mask area keeps them at full magnitude regardless of framing.
-- **Eroded-mask SSIM** — SSIM's 11×11 window straddles the artificial black mask boundary and
-  registers a huge structural edge, pulling Gaussians onto the silhouette and tearing topology.
-  Eroding ~5 px inward keeps the window inside the object. The L1 term still uses the full mask.
-
-### 3 · Focal crop and positional anchor
-
-- **Focal crop** (`--focal-size 384`) fills the VRAM-capped frame with the object instead of the
-  scene — roughly **4× the effective object resolution** at the same memory cost.
-- **L2 anchor** (`--anchor-lambda 0.2`) tethers Gaussians to their pruned positions during early
-  training, preventing the topology tearing that masked gradients alone still allow.
-
-### 4 · The visual-hull cage
-
-Masking alone does not stop the hook. The cage adds two constraints:
-
-- **Black-composite GT + unmasked L1** — so any splat that renders over background is *penalized*
-  rather than merely ungraded.
-- **Scale clamp** (`SUGAR_SCALE_CLAMP`, q0.98 of the initial pruned scales) — so splats cannot stretch
-  into depth spikes.
-
-Result on object4: the coarse Poisson mesh goes from 8.84 units / PCA [1, 0.22, 0.13] to
-**[0.920, 1.007, 1.083] / PCA [1, 0.99, 0.93]**.
-
-### 5 · Poisson depth by measured topology
-
-An octree depth tuned for a whole scene is actively wrong for one isolated object. Varying *only* the
-depth on object4's own surface cloud:
-
-| depth | triangles | components | genus |
-|--:|--:|--:|--:|
-| 6 | 22 k | 9 | 0 |
-| 7 | 87 k | 17 | −1 |
-| 8 | 365 k | 63 | 4 |
-| 9 | 1.54 M | **370** | **29** |
-
-This is not sample starvation — depth 9 still has ~14 samples per leaf. The level-set cloud carries
-genuine small-scale structure, and a fine octree reproduces it as tunnels. Worse, a shattered 1.5 M
-mesh must be decimated, which creates non-manifold edges, whose removal turns genus 29 into **13,173
-boundary edges across 437 components**.
-
-`--gp-poisson-depth auto` therefore **measures the outcome instead of predicting it**: reconstruct
-from depth 9 downward, accept the first depth with clean topology. A predictive heuristic based on
-nearest-neighbour spacing was tried twice and selected depth 9 both times.
-
-### Masked SuGaR vs. the carve path
-
-Same subject (Spider-Man bobblehead), two captures, two paths:
-
-| | object2 · **carve** | object6 · **masked SuGaR** |
-|:--|:--:|:--:|
-| frames | 240 | 236 |
-| texture coverage | 86.31 % | **90.29 %** |
-| **texture PSNR** | 22.89 dB | **24.02 dB** |
-| topology | genus 0 | genus 0 |
-| never-seen geometry | — | **0.2 %** |
-
-On object4 the comparison is **18.77 dB masked vs 18.33 dB carve** — but the masked run's coverage is
-*lower* (77.46 % vs 97.59 %), and that is the honest direction: hull completion moved the wound to the
-true never-seen bottom instead of slicing through a region cameras could paint. Judge by render and
-topology, not coverage alone.
-
-The carve path remains the default for untried objects because it is more forgiving; masked SuGaR is
-the better result when it works.
-
----
-
-# Part II — The SDF optimization
-
-Full write-up: [`optimization_report.md`](./optimization_report.md).
-
-### The bottleneck
-
-Profiling one complete run (object3, 240 frames) attributed wall-clock as:
-
-| Stage | Time | Share |
-|:--|--:|--:|
-| frames + sharpness | 2.0 min | 0.3 % |
-| COLMAP | 9.0 min | 1.5 % |
-| vanilla 3DGS | 10.7 min | 1.7 % |
-| **SuGaR** | **591.7 min** | **96.5 %** |
-| masks + carve + cleanup | 3.2 min | 0.5 % |
-
-Inside SuGaR the cost is not smooth — it jumps **85×** at iteration 9000:
-
-| Sub-phase | Time | Per-iteration |
-|:--|--:|--:|
-| coarse, iters 0–9000 | 60 min | 0.066 s |
-| **coarse, iters 9000–15000 (SDF phase)** | **566 min** | **5.6 s** |
-| Poisson + refine + texture | 24 min | — |
-
-Three losses switch on together at iteration 9000, each evaluating the Gaussian density field at
-`n_samples_for_sdf_regularization = 1_000_000` freshly drawn points — a
-(10⁶ samples × 16 neighbours × 3×3 covariance) gather, **1.6 × 10⁷ covariance reads per iteration**.
-This single phase is **9.43 h of a 10.22 h pipeline**, and it is governed by a constant, not by input
-size.
-
-### Hypothesis H1
-
-> The SDF phase is **memory-bandwidth bound** on the per-sample K-neighbour gather. Therefore
-> (a) its wall-clock is **linear in the sample count**, and (b) that count can be cut by an order of
-> magnitude with negligible effect, because the loss is a per-sample **mean** whose estimator variance
-> is *already* suppressed by averaging over 6,000 optimization steps. Paying fully for both
-> per-step precision and step-averaging double-counts the same variance budget.
-
-### Validation
-
-**A · Kernel microbenchmark** — linear fit **R = 0.9994**, flat µs/sample (the memory-bound
-signature; a compute-bound kernel shows *falling* per-unit time), linearly scaling VRAM.
-
-| n_samples | time (s) | peak VRAM (GB) | µs/sample |
-|--:|--:|--:|--:|
-| 100,000 | 0.0184 | 0.197 | 0.184 |
-| 250,000 | 0.0446 | 0.442 | 0.178 |
-| 500,000 | 0.0778 | 0.844 | 0.156 |
-| 1,000,000 | 0.1560 | 1.654 | 0.156 |
-
-**B · Real model** (object3's actual 42,837-Gaussian checkpoint) — **2.69× faster at 300 k vs 1 M**.
-
-**C · Estimator accuracy** — the estimator *plateaus by 200 k*, and 50 k's 0.42 % per-step error
-becomes **0.0054 %** once averaged over 6,000 steps:
-
-| n_samples | per-step rel. error | after √6000-step averaging |
-|--:|--:|--:|
-| 50,000 | 0.42 % | **0.0054 %** |
-| 100,000 | 0.31 % | 0.0040 % |
-| 200,000 | 0.24 % | 0.0031 % |
-| 300,000 | 0.24 % | 0.0031 % |
-| 1,000,000 | 0.12 % | 0.0015 % |
-
-**D · End-to-end A/B** — same frames, same COLMAP poses, same 3DGS checkpoint; only the sample count
-differs (50 k vs 300 k):
-
-| | 50 k SDF | 300 k SDF |
-|:--|--:|--:|
-| SuGaR stage | **1 h 44 m** | 2 h 08 m |
-| triangles | 12,675 | 12,552 (−1.0 %) |
-| bbox extent | [0.832, 0.943, 0.993] | [0.829, 0.948, 0.995] |
-| largest component | 99.1 % | 97.9 % |
-| texture coverage | **97.59 %** | 96.32 % |
-| texture PSNR | **18.33 dB** | 18.29 dB |
-
-**Symmetric Chamfer distance:** mean **0.00490 = 0.31 % of the bbox diagonal**, median 0.20 %,
-p95 0.81 %. The 20× cheaper mesh is geometrically indistinguishable, and textures just as well.
-
-### Implementation
-
-```python
-# upstream
-n_samples_for_sdf_regularization = 1_000_000  # 300_000
-
-# H1 — environment-gated, upstream default preserved
-n_samples_for_sdf_regularization = int(os.environ.get('SUGAR_SDF_SAMPLES', 1_000_000))
+```bash
+git clone --recursive <repository-url> SuGaR
+cd SuGaR
+git submodule update --init --recursive
+source env.sh
 ```
 
-Loss-scale invariance is what makes this safe: the SDF loss is a `.mean()`, so the sample count
-changes only per-step gradient *variance*, never the loss magnitude or its gradient's expectation.
+Run every remaining command from the repository root. If the repository is already cloned, the
+submodule command is still safe and ensures the 3DGS rasterizer and `simple-knn` sources exist.
 
-### Error-guided sampling (the safety net)
+</details>
 
-A reduced budget risks starving thin, high-curvature regions. `--error-mix 0.5` splits the budget:
-half chases high-SDF-residual Gaussians (per-Gaussian EMA, decay 0.9), half holds a uniform coverage
-floor. On by default; disable with `--no-error-guided`.
+<details>
+<summary><b>3 · Create the <code>sugar</code> environment and build CUDA extensions</b></summary>
 
-### H2 — the VRAM guarantee is a derivation, not a constant
+Create the pinned Python 3.9 / PyTorch 2.0.1 / CUDA 11.8 / PyTorch3D 0.7.4 environment:
 
-SuGaR keeps **every** GT image resident on the GPU, so its footprint is `n · w · h · 3 · 4` bytes —
-*linear in frame count*. A cap that fits 240 frames OOMs at 400. The pipeline instead solves a byte
-budget for the image side length, from **measured free VRAM** at launch:
+```bash
+source env.sh
+conda env create -f environment.yml
 
+conda run -n sugar pip install -e \
+  ./gaussian_splatting/submodules/diff-gaussian-rasterization
+conda run -n sugar pip install -e \
+  ./gaussian_splatting/submodules/simple-knn
 ```
-side = √( budget_bytes / (12 · n_frames · aspect) ),  clamped to [480, 1600], rounded to 32
+
+Install the packages used by the active closure, texture and collision stages:
+
+```bash
+conda run -n sugar pip install \
+  trimesh==4.12.2 pymeshfix==0.17.2 xatlas==0.0.11 coacd==1.0.11
+
+# Required only for --texture. Clone this dependency if nvdiffrast/ is absent.
+git clone https://github.com/NVlabs/nvdiffrast.git
+conda run -n sugar pip install ./nvdiffrast
 ```
 
-| frames | derived cap | GT resident |
-|--:|--:|--:|
-| 236 | 768 px | 0.94 GB |
-| 400 | 576 px | 0.89 GB |
-| 499 | 544 px | ~0.9 GB |
+Do not clone `nvdiffrast` again when the directory already exists. `python install.py` automates the
+base environment and CUDA-extension installation, but it uses unchecked shell return codes; the
+explicit commands above make build failures visible.
 
-The footprint stays flat at ~0.9 GB from 150 to 600 frames. **The pipeline has never OOMed.**
+</details>
 
-Because the budget is read from *measured* free VRAM at launch, the same frame count can resolve
-differently between runs — object4 and object5 have identical frames yet selected 544 px and 512 px,
-because slightly less VRAM was free the second time. That is the mechanism working as intended, but
-it means the cap is not a reproducible constant; pin it with `SUGAR_MAX_IMG_SIZE` if you need an
-exactly controlled comparison.
+<details>
+<summary><b>4 · Create the COLMAP/video and U²-Net environments</b></summary>
 
-### The honest caveat — Amdahl's law
+The `colmap` environment supplies both SfM and ffmpeg. The conda-forge CUDA build is used on the
+tested machine; a CPU COLMAP build also works, more slowly.
 
-The *stage* speedup (1.22× at 50 k vs 300 k) is far below the *kernel* speedup (2.69×). A two-point
-decomposition of real run blocks gives `k ≈ 1.60 × 10⁻⁶ min/sample/block` and a fixed
-`T_fixed ≈ 0.64 min/block` — so at 50 k, **~89 % of each block is fixed cost**: per-iteration
-rendering of all GT images. H1 accelerates a component that, once reduced, is no longer the majority
-of the phase. **The lever is real, but its end-to-end leverage is capture-dependent** — it is largest
-on few-image captures.
+```bash
+conda create -n colmap -c conda-forge colmap ffmpeg -y
+```
 
----
+The `seg` environment supplies rembg's U²-Net session and OpenCV for optional bilateral filtering:
 
-# Running the pipeline on your own video
+```bash
+conda create -n seg -c conda-forge python=3.10 pip -y
+conda run -n seg pip install \
+  rembg==2.0.69 onnxruntime==1.23.2 opencv-python-headless==5.0.0.93
+```
 
-### Prerequisites
+U²-Net weights are downloaded into the rembg cache the first time a session is created. Preload
+them while network access is available:
 
-Four conda environments, created once (see [Environments](#environments)). The capture itself matters
-more than any flag:
+```bash
+conda run -n seg python -c \
+  "from rembg import new_session; new_session('u2net'); print('U2Net ready')"
+```
 
-- **Orbit the object** through a full 360° of azimuth. The visual hull and the support gate both
-  assume the subject stays framed.
-- **Vary elevation** if you can. A single-height orbit cannot resolve the top or the underside.
-- **Keep the object framed and reasonably large.** It becomes ~5 % of a VRAM-capped frame; the focal
-  crop recovers some of that, but nothing recovers a subject that leaves the frame.
-- **Matte and textured wins.** Glossy struggles, transparent mostly fails — see the results table.
-- 30–60 s of video at 1080p is plenty.
+</details>
+
+<details>
+<summary><b>5 · Point the launcher at conda and verify all three environments</b></summary>
+
+`scripts/reconstruct_object.sh` defaults to the conda initialization path used on the development
+machine. Override it once per shell when conda lives elsewhere:
+
+```bash
+export CONDA_SH="$(conda info --base)/etc/profile.d/conda.sh"
+source env.sh
+```
+
+Run the smoke checks before committing to a long reconstruction:
+
+```bash
+conda run -n colmap colmap -h
+conda run -n colmap ffmpeg -version
+conda run -n seg python -c "import rembg, cv2; print('seg ready')"
+conda run -n sugar python -c \
+  "import torch, open3d, trimesh, pymeshfix, xatlas, coacd, nvdiffrast.torch; \
+from diff_gaussian_rasterization import GaussianRasterizer; \
+from simple_knn import _C; \
+print(torch.cuda.get_device_name(0))"
+bash -n scripts/reconstruct_object.sh
+```
+
+If the CUDA imports fail, rebuild both 3DGS extensions after sourcing `env.sh`; changing only runtime
+flags cannot repair an extension compiled for the wrong GPU architecture.
+
+</details>
+
+<details>
+<summary><b>6 · Capture and prepare an input video</b></summary>
+
+Put the video under `inputs/`, preferably as a 30–60 second 1080p MP4.
+
+- Orbit the object through a complete 360° azimuth.
+- Vary elevation so cameras observe the top and the underside.
+- Keep the object centered, fully in frame and reasonably large.
+- Use diffuse lighting and a matte, textured subject where possible.
+- Avoid motion blur, changing exposure, transparent materials and strong specular reflections.
+
+The visual hull can only preserve structures that affect the silhouettes. A hole hidden from most
+views or a gap with another part behind it is likely to be filled, as seen on the Mecanum wheel.
+
+</details>
 
 ### Quickstart
 
 ```bash
 cd SuGaR
-bash scripts/reconstruct_object.sh --video inputs/myobject.mp4 --name myobject
+export CONDA_SH="$(conda info --base)/etc/profile.d/conda.sh"
+bash scripts/reconstruct_object.sh \
+  --video inputs/myobject.mp4 \
+  --name myobject
 ```
 
-That runs the conservative default: carve-based isolation, short refinement, geometry only.
-
-**Optional bilateral preprocessing.** Pass `--bilateral` to filter only the selected sharp frames
-before they enter COLMAP; it is off by default and runs after viewpoint selection. In the
-[`object10` long-refine A/B test](./docs/notes/hard_bilateral_object10_benchmark.md), a hard setting
-(`d=7`, `sigmaColor=50`, `sigmaSpace=3`) cut SIFT features by 38.79 %, registered 238/240 rather than
-240/240 cameras, reduced 3DGS PSNR by 0.918 dB, and lowered texture coverage from 68.16 % to 60.79 %.
-The final mesh remained close (0.53 % mean and 1.29 % p95 of the aligned control diagonal), but the
-hard filter offered no overall quality gain, so bilateral filtering remains opt-in and that setting
-is not recommended as a global default.
+That runs the conservative default: sharp-frame selection, full-scene COLMAP and 3DGS, U²-Net
+masks, full-supervision SuGaR, mesh-space isolation, short refinement and vertex-coloured geometry.
 
 ### Recommended full run
 
@@ -453,41 +303,52 @@ nohup bash scripts/reconstruct_object.sh \
 tail -f scenes/myobject_run.log
 ```
 
-This is the configuration behind the object6 and object7 results: dense frame extraction with
-sharpness selection, masked SuGaR isolation, the optimized SDF budget, long refinement, and both
-optional output assets.
+This enables Gaussian-space isolation before meshing, error-guided SDF sampling, long refinement,
+the observation-only texture atlas and the optional compound-convex collision asset.
 
-### Resuming
+**Optional bilateral preprocessing.** Add `--bilateral` to filter only the selected sharp frames
+before they enter COLMAP. It is off by default. In the
+[`object10` long-refine A/B test](./docs/notes/hard_bilateral_object10_benchmark.md), the hard
+setting `d=7, sigmaColor=50, sigmaSpace=3` cut SIFT features by 38.79%, lost two camera
+registrations, reduced 3DGS PSNR by 0.918 dB and lowered texture coverage by 7.37 percentage points.
+The final geometry remained close, but there was no overall quality gain, so the hard setting is
+not recommended as a global default.
 
-Every stage writes `scenes/<name>/.done_<stage>`. Re-running skips completed stages, so to re-run
-only from mesh extraction onward:
+### Resume or rerun a stage
+
+Every stage writes `scenes/<name>/.done_<stage>`. Repeating the same command resumes from the first
+unfinished stage. To rerun from masked SuGaR onward while keeping COLMAP and 3DGS cached, remove only
+the downstream markers:
 
 ```bash
 rm -f scenes/myobject/.done_sugar_gp scenes/myobject/.done_rhofilter \
       scenes/myobject/.done_hullcomplete scenes/myobject/.done_texture_gp \
       scenes/myobject/.done_collision
-bash scripts/reconstruct_object.sh --video inputs/myobject.mp4 --name myobject ... # same flags
+bash scripts/reconstruct_object.sh \
+  --video inputs/myobject.mp4 --name myobject \
+  --gaussian-prune --sdf-samples 50000 --refine long --texture --collision
 ```
 
-COLMAP and 3DGS — 80 % of wall-clock — stay cached. Use `--force` to ignore all markers.
-
-### On long unattended runs
-
-This box is 7.7 GB of RAM and has lost the entire WSL VM once to a memory spike during decimation. A
-process killed by a watchdog leaves a log; a dead VM leaves nothing. For multi-hour runs, wrap the
-pipeline in a watchdog that samples `MemAvailable` from `/proc/meminfo` and kills the process group
-below ~700 MB.
+Use `--force` to ignore every marker. A changed frame-stage option such as `--fps`, `--target`, or
+`--bilateral` has no effect while `.done_frames` exists; use a new object name or rerun the whole
+pipeline with `--force`.
 
 ### Choosing parameters
 
 | If your object is… | then… |
 |:--|:--|
-| compact and matte (cube, box, figurine) | defaults are right; add `--gaussian-prune` |
-| **thin or spindly** (frames, masts, wires) | lower `--rho-keep-ratio` to ~0.3, and expect stage 7b to hurt |
-| **high-genus** (perforated, holed) | pin `--gp-poisson-depth 7` or 8 — `auto`'s genus bound will under-resolve it |
-| small in frame | keep `--focal-crop` on (default), raise `--target` |
-| glossy or transparent | expect partial recovery; this is physics |
-| captured in a cluttered room | `--gaussian-prune` — the support gate is built for exactly this |
+| compact and matte (cube, box, figurine) | add `--gaussian-prune`; the default support and agreement gates are appropriate |
+| **thin or spindly** (frames, spokes, wires) | lower `--rho-keep-ratio` toward `0.3`; visual-hull completion can still fuse or remove thin parts |
+| **high-genus** (perforated, holed) | inspect the rho mesh and consider pinning `--gp-poisson-depth 7` or `8` |
+| small in frame | keep `--focal-crop` on and increase `--target` only if VRAM permits |
+| glossy or transparent | expect partial recovery; more frames do not remove view-dependent appearance |
+| captured in clutter | use `--gaussian-prune` so support and silhouette agreement reject the scene |
+
+### Long unattended runs
+
+The development machine has only 7.7 GB system RAM. For multi-hour runs, log stdout/stderr, monitor
+`MemAvailable` and keep other GPU workloads closed. A process-level failure leaves resumable stage
+markers and logs; exhausting the host or WSL VM may not.
 
 ---
 
@@ -502,7 +363,7 @@ below ~700 MB.
 | `--video` | — | **required** — input video |
 | `--name` | video basename | scene name under `scenes/` |
 | `--fps` | `10` | extraction rate *before* sharpness filtering. Over-extract: `select_sharp.py` keeps the sharpest frame per sliding window, so a higher fps only improves the choice |
-| `--target` | `240` | sharp frames to keep. More frames = better hull and coverage, but a *lower* derived SuGaR resolution (H2) |
+| `--target` | `240` | sharp frames to keep. More frames improve hull coverage but lower the VRAM-derived SuGaR resolution |
 | `--gs-iters` | `7000` | vanilla 3DGS iterations |
 | `--bilateral` | off | bilateral-filter selected frames before they enter the scene directory |
 | `--bilateral-diameter` | `3` | positive odd OpenCV filter-neighborhood diameter |
@@ -510,7 +371,7 @@ below ~700 MB.
 | `--bilateral-sigma-space` | `1` | spatial sigma in pixels |
 | `--bilateral-jpeg-quality` | `95` | JPEG quality for filtered selected frames |
 
-### Masked SuGaR (Part I)
+### Gaussian-space isolation and masked SuGaR
 
 | Flag | Default | Meaning |
 |:--|:--:|:--|
@@ -527,7 +388,7 @@ below ~700 MB.
 | `--refine` | `short` | SuGaR refinement: `short` (2k) / `medium` (7k) / `long` (15k iters) |
 | `--vertices` | `500000` | foreground vertex budget |
 
-### SDF optimization (Part II)
+### SDF sampling and refinement
 
 | Flag | Default | Meaning |
 |:--|:--:|:--|
@@ -539,7 +400,7 @@ below ~700 MB.
 
 | Flag | Default | Meaning |
 |:--|:--:|:--|
-| `--rho-keep-ratio` | `0.75` | ρ's visual-hull test. **Lower to ~0.3 for thin structures** — at 0.75 it amputated object7's masts and wheels |
+| `--rho-keep-ratio` | `0.75` | ρ's visual-hull agreement test. **Lower toward 0.3 for thin structures**, accepting weaker rejection of fused geometry |
 | `--hull-grid` | `256` | hull carve voxel grid per axis. Carve time scales ~N³ |
 | `--hull-target-faces` | `150000` | decimation target for the completed mesh |
 | `--keep-ratio` | `0.85` | mesh-space carve threshold (default path only) |
@@ -574,8 +435,8 @@ evidence, and that is the root of the "bulge"**: in a region no camera saw, noth
 Gaussians, junk accumulates, and Poisson fits that junk with the same weight as a face seen 300
 times.
 
-Measured on object4: floater components had mean ρ **0.033** with 73 % never-seen, against the body's
-**0.594**. Filtering took the mesh from 81,438 faces / 191 components to 66,599 / **1**.
+On the Rubik's Cube run, ρ pruning retained 59,469 of 78,642 refined faces. About 3.07% of faces
+were never supported by any registered camera, while the median face support was 0.713.
 
 Three things this stage had to get right:
 
@@ -622,8 +483,9 @@ Two design points that were learned the hard way:
   surface and takes p95 of its dissent × 1.5. Hand-setting failed in both directions: 0 deleted a real
   upper body, a borrowed 0.25 inflated the hull 21.7 % in Z.
 
-Result on object4: watertight, euler 2, 1 component, **enclosed volume 0.2229 against a hull volume of
-0.2230**, observed geometry moving by a median 0.00004.
+For the Rubik's Cube, completion fused the 59,469 supported input faces into a single 150k-face
+shell. About 28.57% of the completed surface was synthesized rather than directly observed; the
+p99 deviation over the observed region was 0.01345 scene units.
 
 ### Stage 8 · Feature-preserving cleanup
 
@@ -673,20 +535,17 @@ Per camera it rejects occluded texels (depth z-test), out-of-mask texels, and gr
 
 | object | atlas | cameras | coverage | mean views/texel | **in-mask PSNR** |
 |:--|:--:|--:|--:|--:|--:|
-| object6 bobblehead | 2048² | 236 | 90.29 % | 66.2 | **24.02 dB** |
-| object2 bobblehead *(carve)* | 2048² | 240 | 86.31 % | 75.8 | 22.89 dB |
-| object3 glass bowl | 2048² | 240 | 89.42 % | 73.4 | 18.42 dB |
-| object4 Rubik's cube | 2048² | 499 | 77.46 % | 188.3 | 18.77 dB |
-| object4 Rubik's cube *(carve)* | 2048² | 499 | 97.59 % | 201.5 | 18.33 dB |
-| object7 forklift | 2048² | 400 | 63.98 % | 67.4 | 14.98 dB |
+| object6 — Spider-Man | 2048² | 236 | 90.29% | 66.16 | **24.02 dB** |
+| object9 — Rubik's Cube | 2048² | 499 | 83.86% | 183.53 | 16.85 dB |
+| object3 — Glass Bowl | 2048² | 240 | 89.42% | 73.38 | 18.42 dB |
+| object8 — Mecanum Wheel | 2048² | 500 | 90.73% | 130.70 | 17.82 dB |
 
 Coverage is reported honestly in `<name>_texbake.json`, and correctness is checked by re-rendering
 the baked mesh against GT inside the mask.
 
-> **Coverage can fall for a good reason.** On object4 it went 84.38 % → 77.46 % when hull completion
-> was introduced — because the completed face now sits at the true never-seen bottom instead of
-> slicing through a region cameras could paint. Judge by render, watertightness, component count and
-> enclosed-volume-vs-hull.
+> **Coverage measures visibility, not correctness.** Completed regions that no camera observed
+> receive fallback colors, and high coverage can coexist with rounded geometry, fused gaps, baked
+> reflections, or other reconstruction errors.
 
 ### Stage 12 · Collision asset *(`--collision`)*
 
@@ -694,8 +553,9 @@ the baked mesh against GT inside the mask.
 compound-convex `.obj` plus a `.urdf` with per-part collisions and inertia computed from the solid —
 ready for MuJoCo, PyBullet or Isaac. Purely algorithmic; invents no geometry.
 
-Part count is a useful sanity signal: **object6 → 41 parts** (clean genus-0 solid);
-**object7 → 235 parts** (hull-dominated blob). A part explosion means the geometry upstream is wrong.
+Part count is a useful sanity signal: **Spider-Man → 41 parts** at concavity 0.02. Spikes or floaters
+upstream can cause CoACD to create many tiny hulls; a part explosion means the geometry upstream is
+wrong.
 
 ---
 
@@ -738,43 +598,43 @@ measured* from *what the closure invented*, and that is almost always where the 
 
 These are measured ceilings, not aspirations.
 
-- **Glossy and transparent surfaces do not fully reconstruct**, regardless of frame sharpness or
-  3DGS PSNR. The glass bowl recovers only its opaque frosted regions. Capture physics, not a tunable.
-- **Visual-hull completion is wrong for spindly, concave objects.** The hull is *admissible* — it is a
-  function of the observations — but admissible is not *appropriate*. On object7 the hull measured
-  [0.684, 0.956, 0.948] against a measured mesh of [0.544, 1.270, 0.888]: **shorter than the object**,
-  because a thin mast dissents in too many views to survive the voxel vote. Re-fusing with Poisson
-  then absorbs the thin geometry, and a good forklift becomes a lump. For such objects the usable
-  artifact is `_rhofilt.ply`, and stage 7b should be skipped.
-- **ρ's hull test is the binding constraint on thin features.** At the 0.75 default it amputated
-  object7's masts *and* every wheel — the wheels had ρ = 1.000 and 54 visible views yet 0 % survived.
-  `--rho-keep-ratio 0.30` recovers them. Note that neither of `observation_confidence.py`'s other
-  levers — `--px-per-face` or `--rho0` — moves this: raising the raster made it slightly *worse*, and
-  `--rho0 0.15 → 0.05` changed nothing at all, because those faces were already rejected by the hull
-  test upstream. **Check which test is binding before tuning a threshold.**
-- **The Poisson depth search's `genus ≤ 8` bound is tuned for compact objects.** It has now made the
-  wrong call in *both* directions — too permissive for a bobblehead, too strict for a perforated
-  forklift, where it rejected a good depth-7 mesh (11 components) purely on genus 13, which is real
-  topology for that object.
-- **A finer mesh does not delete more, it deletes the same fraction *scattered*.** Going from depth 6
-  to 7 on object6 took the observed region from 3 connected components to 331, and every one of those
-  wound patches becomes a seam the closure has to bridge.
-- **PSNR cannot see most of this.** It moved 19.42 → 19.32 dB while a large bulge vanished, because
-  the defect sat on an unobserved face that held-view PSNR never samples. **Render the artifact.**
+- **Transparent and reflective materials remain ill-posed.** The Glass Bowl's view-dependent
+  appearance violates the stable-surface-color assumption used by Gaussian optimization and texture
+  projection, producing a lumpy, nearly textureless surface even when its rim and ridges remain
+  plausible.
+- **Silhouettes cannot reveal persistently occupied concavities.** For the Mecanum Wheel, roller gaps
+  were fused and the axle opening disappeared because those image regions were usually occupied from
+  the captured viewpoints.
+- **Thin or incompletely observed structures disappear easily.** Spider-Man's fine webbing, fingers,
+  and out-of-frame crown geometry are vulnerable to segmentation, ρ pruning, low-resolution
+  silhouettes, and completion.
+- **Completion necessarily invents hidden geometry.** Visual-hull fusion closes wounds and supplies
+  watertight volume, but unsupported regions are constrained by silhouettes rather than measured
+  surface evidence.
+- **Poisson reconstruction smooths sharp edges.** The error-guided sampler concentrates points near
+  discrepancies, but it cannot make Poisson intrinsically edge-preserving; the Rubik's Cube therefore
+  becomes rounded or pillowed.
+- **Automatic genus selection is heuristic.** It uses the Euler characteristic of the measured mesh
+  as a proxy, which is useful but not guaranteed to recover the true topology of mechanically complex
+  objects.
+- **Coverage and PSNR are insufficient asset-quality metrics.** Inspect the mesh render, Euler
+  characteristic, enclosed volume, texture artifacts, and collision-part count together.
 
 ---
 
 ## Environments
 
-Four environments, created once, deliberately isolated so no stage's dependencies can perturb the
-pinned `torch 2.0.1 + pytorch3d 0.7.4` stack SuGaR requires.
+Three active environments, created once and deliberately isolated so no stage's dependencies can
+perturb the pinned `torch 2.0.1 + pytorch3d 0.7.4` stack SuGaR requires.
 
 | Env | Purpose | Key pins |
 |:--:|:--|:--|
 | `sugar` | reconstruction + geometry | python 3.9, torch 2.0.1/cu118, pytorch3d 0.7.4, Open3D, xatlas, trimesh, pymeshfix, coacd, `TORCH_CUDA_ARCH_LIST=7.5+PTX` |
 | `colmap` | SfM + video | COLMAP 3.13 (CUDA build), ffmpeg |
 | `seg` | object masks | rembg / U²-Net (onnxruntime) |
-| `cad` | *(legacy)* | CadQuery / Open CASCADE |
+
+The repository may still contain a legacy `cad` environment, but `reconstruct_object.sh` does not
+activate it.
 
 Two failure modes on this hardware masquerade as memory errors and are worth knowing:
 
@@ -815,8 +675,8 @@ numpy/BLAS and break the pinned torch stack. It is only ever invoked as an exter
 <div align="center">
 
 Built on top of <a href="https://github.com/Anttwo/SuGaR">SuGaR (Guédon &amp; Lepetit, CVPR 2024)</a>.<br>
-SDF optimization write-up: <a href="./optimization_report.md">optimization_report.md</a> ·
-Pipeline engineering log: <a href="../3dReconstruction.md">3dReconstruction.md</a> ·
-Completion theory: <a href="../morphogenetic_completion.md">morphogenetic_completion.md</a>
+SDF optimization write-up: <a href="./docs/notes/optimization_report.md">optimization_report.md</a> ·
+Pipeline engineering log: <a href="./docs/notes/3dReconstruction.md">3dReconstruction.md</a> ·
+Completion theory: <a href="./docs/notes/morphogenetic_completion.md">morphogenetic_completion.md</a>
 
 </div>
