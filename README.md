@@ -36,7 +36,18 @@ deterministic function of those labels, and unseen regions remain explicitly dis
 measured surface. The implementation was developed on a **4 GB GTX 1650 with 7.7 GB system RAM**:
 error-guided SDF sampling reduces SuGaR's one-million-point Monte Carlo budget to 50,000, the image
 resolution is derived from measured free VRAM and frame count, and 384 px focal crops spend that
-limited budget on the object rather than the surrounding scene._
+limited budget on the object rather than the surrounding scene.
+
+All deliverables are present in docs/ as follows:
+Final Meshes (as textured glb): docs/mesh/
+Renders of the mesh: docs/renders/    (look for objects 3,6,8,9)
+Writeup: docs/notes/DiracWriteup.pdf
+Animations: docs/gifs/
+
+_
+
+
+
 
 ---
 
@@ -120,8 +131,33 @@ described in [`docs/notes/Dirac_writeup.pdf`](./docs/notes/Dirac_writeup.pdf). W
 
 The launcher uses three isolated conda environments—`sugar`, `colmap`, and `seg`—because changing
 COLMAP or ONNX dependencies inside the pinned PyTorch/PyTorch3D environment can break the CUDA
-extensions. The checked-in `environment.yml` creates the reconstruction base; the active geometry
-extras and the two utility environments must be installed separately as shown below.
+extensions.
+
+### Automated setup wizard
+
+After cloning, the preferred setup path is the staged, resumable wizard. Its planning mode detects
+Linux/WSL, GPU and driver visibility, compute capability, memory, disk, compilers and existing conda
+installations without changing the machine:
+
+```bash
+bash scripts/setup_wizard.sh --plan
+bash scripts/setup_wizard.sh
+```
+
+The installer reuses conda or bootstraps a checksum-verified private Miniforge, creates all three
+environments, selects a GPU-specific CUDA architecture and memory-safe build parallelism, compiles
+the native extensions, caches U²-Net and runs real CLI, geometry and CUDA-kernel checks. Generated
+state stays under `.setup/`; the final report is `.setup/reports/dry-check.json`. Re-run only the
+checks with:
+
+```bash
+bash scripts/setup_wizard.sh --check-only
+```
+
+See the [setup-wizard architecture](./docs/notes/setup_wizard.md) for stage contracts, detection
+rules, safety boundaries and recovery controls. The manual installation below remains useful for
+debugging or controlled environments. The checked-in `environment.yml` creates its reconstruction
+base; active geometry extras and the two utility environments must then be installed separately.
 
 <details>
 <summary><b>1 · System, GPU and compiler prerequisites</b></summary>
