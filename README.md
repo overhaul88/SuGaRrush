@@ -36,12 +36,20 @@ deterministic function of those labels, and unseen regions remain explicitly dis
 measured surface. The implementation was developed on a **4 GB GTX 1650 with 7.7 GB system RAM**:
 error-guided SDF sampling reduces SuGaR's one-million-point Monte Carlo budget to 50,000, the image
 resolution is derived from measured free VRAM and frame count, and 384 px focal crops spend that
-limited budget on the object rather than the surrounding scene.
+limited budget on the object rather than the surrounding scene._
 
-All deliverables are present in docs/ as follows:
+_All deliverables are present in docs/ as follows:
+
+
 Final Meshes (as textured glb): docs/mesh/
-Renders of the mesh: docs/renders/    (look for objects 3,6,8,9)
+
+
+Renders of the mesh: docs/renders/*_glb.png
+
+
 Writeup: docs/notes/DiracWriteup.pdf
+
+
 Animations: docs/gifs/
 
 _
@@ -66,12 +74,12 @@ _
 | measured outcome | closed body; fine costume detail lost | strongest geometry; rounded and pillowed | lumpy partial shell | silhouette recovered; rollers fused |
 
 <div align="center">
-<img src="./docs/renders/object6_final_1.png" alt="object6 Spider-Man final mesh" width="220"/>
-<img src="./docs/renders/object9_final_1.png" alt="object9 Rubik's Cube final mesh" width="220"/>
-<img src="./docs/renders/object3_final_1.png" alt="object3 glass bowl final mesh" width="220"/>
-<img src="./docs/renders/object8_final_1.png" alt="object8 Mecanum wheel final mesh" width="220"/>
+<img src="./docs/renders/object6_glb_1.png" alt="object6 Spider-Man" width="220"/>
+<img src="./docs/renders/object9_glb_1.png" alt="object9 Rubik's Cube" width="220"/>
+<img src="./docs/renders/object3_glb_1.png" alt="object3 glass bowl" width="220"/>
+<img src="./docs/renders/object8_glb_1.png" alt="object8 Mecanum wheel" width="220"/>
 <br>
-<b>Left → right:</b> Spider-Man · Rubik's Cube · glass bowl · Mecanum wheel.
+Spider-Man · Rubik's Cube · glass bowl · Mecanum wheel.
 </div>
 
 **Spider-Man (`object6`).** The pipeline produces a closed figure with the large-scale body and
