@@ -1,0 +1,6 @@
+name: colmap
+channels:
+  - conda-forge
+dependencies:
+  - colmap=3.13
+  - ffmpeg

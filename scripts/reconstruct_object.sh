@@ -41,6 +41,14 @@
 set -euo pipefail
 
 SUGAR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Consume the setup wizard's machine-specific conda, CUDA, compiler and model
+# locations automatically. Existing hand-configured systems continue to use
+# the legacy defaults below when no generated profile exists.
+SETUP_RUNTIME_ENV="${SUGARRUSH_SETUP_ENV:-$SUGAR_DIR/.setup/runtime.env}"
+if [[ -f "$SETUP_RUNTIME_ENV" ]]; then
+  # shellcheck disable=SC1090
+  source "$SETUP_RUNTIME_ENV"
+fi
 # Everything the pipeline reads/writes lives under SuGaR/ so the repo is self-contained.
 # Videos in SuGaR/inputs/, scenes in SuGaR/scenes/, artifacts in SuGaR/output/. Only the
 # conda location is machine-specific: override it with  CONDA_SH=/path/to/conda.sh  if needed.

@@ -1,0 +1,36 @@
+name: sugar
+channels:
+  - pytorch3d
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+  - ninja
+  - numpy=1.26
+  - pillow
+  - scipy=1.11
+  - plyfile
+  # Channel qualification prevents a user's global conda configuration from
+  # silently selecting the CPU builds while still satisfying the names.
+  - pytorch::pytorch=2.0.1
+  - pytorch::torchvision=0.15.2
+  - pytorch::pytorch-cuda=11.8
+  - pytorch3d::pytorch3d=0.7.4
+  # A private, version-matched build toolchain removes the requirement for a
+  # system-wide CUDA toolkit or a particular distribution's GCC packages.
+  - nvidia::cuda-nvcc=11.8
+  - nvidia::cuda-cudart-dev=11.8
+  - nvidia::cuda-cccl=11.8
+  # Prevent the solver from pairing the 11.8 runtime with a current
+  # CUDA-13-only libcufile through a loose transitive constraint.
+  - nvidia::libcufile=1.8.1.2
+  - gcc_linux-64=11
+  - gxx_linux-64=11
+  - pip:
+      - open3d==0.17.0
+      - trimesh==4.12.2
+      - pymeshfix==0.17.2
+      - xatlas==0.0.11
+      - coacd==1.0.11
