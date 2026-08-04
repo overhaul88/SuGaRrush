@@ -1,0 +1,435 @@
+{
+  "asset": "object6",
+  "files": {
+    "collision/object6_hull_00.stl": "f921446eae2c5e60804d9b8945a5c0da88bf15e0e43ea279d4fb1eb8ac241e04",
+    "collision/object6_hull_01.stl": "41e2443978ff6dc4b09f77ef4add09f0c2485dc6c2519b1ccc4041693a9ad79a",
+    "collision/object6_hull_02.stl": "d94db1983b3fa80b5a0015c4b7fe6cbe1b261eb9a4845a73347bb84b771ebf1d",
+    "collision/object6_hull_03.stl": "eb1df6809bc6594755b38e9235c562746b58765b1935714728e0dc747161fde8",
+    "collision/object6_hull_04.stl": "bb2411fa58d8860ca302fac319c217e1b7fb90ec6f8b72efc50cb39292fbce95",
+    "collision/object6_hull_05.stl": "ec762d5aaaa0e79e15afafb0b65a27d2384249916f80451a07b765d84471caa8",
+    "collision/object6_hull_06.stl": "37fc81e2abc6d50a17b8fd8289110a46f8dd06433d68d52291a02843d2a67ef3",
+    "collision/object6_hull_07.stl": "2cf6db3ea7c8ca095500689761a459769ffa17abaf2c55e3879c46064b9603ce",
+    "collision/object6_hull_08.stl": "8292b86f3b77b3e3e458ae7faca92eecc824399ad94a1a653cf5d038b8b9d14a",
+    "collision/object6_hull_09.stl": "cc1c36ba1e5031c7c97648c497859e13c2bd0403bace90d569e95df651c8474d",
+    "collision/object6_hull_10.stl": "31cc9c5f8f4af7a3af346326ab87edb3df11bd672fe5a90e4cd6cc8f611cdeab",
+    "collision/object6_hull_11.stl": "508a6b8f67a76c07f1c68a210c5cdd63cc713988fc3c66080ba4f96c9122d4a0",
+    "collision/object6_hull_12.stl": "97d8cf76533f392389f7aa1c5248f1ac3bafb779ca4c8130451abd328a1d1b60",
+    "collision/object6_hull_13.stl": "2994fe62e1e039f2e4db51be6bca48c52c7b8e82638ded4aa6343f9fe17258c3",
+    "collision/object6_hull_14.stl": "afac9cad8b8ab96ae1a3afcd8d483c3ce4c470b9e940862d36feeeaa383b6d61",
+    "collision/object6_hull_15.stl": "17cd79499882035c31c1bf6706c6411d65ccda0132336df63da828cb85e63b11",
+    "object6_body.xacro": "4621c237220bd3bf46c326fc9d9c908fff0263fe180e7382a80a1e9fbfac625a",
+    "visual/object6.png": "8ebc365cc82891b2411c04b3101c3e3edb553fad3da2e238825e7ffb190b517d",
+    "visual/object6_visual.mtl": "c65dc1b8679a4f4e883156c505ca56439efb5edf127f08463ece7762f5d960cc",
+    "visual/object6_visual.obj": "4b3d0b971a29b8bede6299b29200fca10703df751eb0492c0b7a11ca02f83452"
+  },
+  "generated_by": "convert_to_sim.py",
+  "geometry": {
+    "coacd_options": {
+      "decimate": true,
+      "max_ch_vertex": 64,
+      "max_convex_hull": 16,
+      "mcts_iterations": 100,
+      "mcts_max_depth": 3,
+      "mcts_nodes": 20,
+      "merge": true,
+      "preprocess_mode": "auto",
+      "preprocess_resolution": 50,
+      "resolution": 1000,
+      "seed": 0,
+      "threshold": 0.08
+    },
+    "collision_validation": {
+      "all_parts_valid": true,
+      "part_count": 16,
+      "parts": [
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 0,
+          "vertices": 64,
+          "volume": 4.847572031084946e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 1,
+          "vertices": 64,
+          "volume": 0.00020133631326287838,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 2,
+          "vertices": 64,
+          "volume": 2.2957048013785944e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 3,
+          "vertices": 64,
+          "volume": 2.2639137716037387e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 4,
+          "vertices": 64,
+          "volume": 0.00015067349789621518,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 5,
+          "vertices": 64,
+          "volume": 7.14232521126405e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 6,
+          "vertices": 64,
+          "volume": 3.1593363689134886e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 7,
+          "vertices": 64,
+          "volume": 5.597493387547044e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 8,
+          "vertices": 64,
+          "volume": 2.469320581486366e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 9,
+          "vertices": 64,
+          "volume": 4.969242371130556e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 10,
+          "vertices": 64,
+          "volume": 5.56473501221176e-06,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 11,
+          "vertices": 64,
+          "volume": 3.5193421210578034e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 12,
+          "vertices": 64,
+          "volume": 3.092029678315845e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 13,
+          "vertices": 64,
+          "volume": 1.8784333437828745e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 14,
+          "vertices": 64,
+          "volume": 7.55687328218459e-05,
+          "watertight": true,
+          "winding_consistent": true
+        },
+        {
+          "convex": true,
+          "faces": 124,
+          "inertia_eigenvalues_positive": true,
+          "part": 15,
+          "vertices": 64,
+          "volume": 5.5521892060677747e-05,
+          "watertight": true,
+          "winding_consistent": true
+        }
+      ],
+      "total_faces": 1984,
+      "total_vertices": 1024
+    },
+    "local_collision_bounds_metres": [
+      [
+        -0.05580011823136717,
+        -0.05526419245176972,
+        -0.09308230795162026
+      ],
+      [
+        0.05424252741171299,
+        0.05214529178301016,
+        0.0829660105910735
+      ]
+    ],
+    "local_source_bounds_metres": [
+      [
+        -0.055029265708838884,
+        -0.05470689648464846,
+        -0.09265194120212339
+      ],
+      [
+        0.05357325213440757,
+        0.05142194604798627,
+        0.08253138361171938
+      ]
+    ],
+    "simplification_fraction": 0.85,
+    "simplified_faces": 98804,
+    "simplified_vertices": 49404,
+    "source_extent_metres": [
+      0.10860251784324645,
+      0.10612884253263473,
+      0.17518332481384277
+    ],
+    "source_faces": 116240,
+    "source_vertices": 58122,
+    "summed_hull_to_source_volume_ratio": 1.0965703406322278
+  },
+  "inertial": {
+    "density_kg_per_m3": 36.642662216437486,
+    "inertia_eigenvalues": [
+      4.588272857251969e-05,
+      9.317247684468705e-05,
+      9.540809598546385e-05
+    ],
+    "inertia_kg_m2_about_mesh_origin": [
+      [
+        9.30769130064085e-05,
+        -2.437077854445182e-07,
+        2.2378366971241924e-06
+      ],
+      [
+        -2.437077854445182e-07,
+        9.532555933585667e-05,
+        1.8750223786688925e-06
+      ],
+      [
+        2.2378366971241924e-06,
+        1.8750223786688925e-06,
+        4.6060829060405345e-05
+      ]
+    ],
+    "mass_kg": 0.04,
+    "method": "whole-object convex-hull proxy",
+    "positive_definite": true,
+    "proxy_volume_m3": 0.001091623740756927
+  },
+  "inputs": {
+    "collision_audit": {
+      "active_faces": 20482,
+      "active_vertices": 10323,
+      "declared_active_parts": 41,
+      "invalid_active_parts": [],
+      "json": "/home/acer/workspace/dirac/SuGaR/output/final/object6/collision/object6_collision.json",
+      "stale_part_count": 102,
+      "stale_part_indices_ignored": [
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142
+      ]
+    },
+    "collision_metadata": "/home/acer/workspace/dirac/SuGaR/output/final/object6/collision/object6_collision.json",
+    "original_metadata_mass_kg": 475.4999658891451,
+    "original_metadata_scale": 1.0,
+    "source_mesh": "/home/acer/workspace/dirac/SuGaR/output/final/object6_final.ply",
+    "source_sha256": "435c1d45238d0737453185c7e147d63dcc44be2b86733cc1c011771877244dde",
+    "visual_mesh": "/home/acer/workspace/dirac/SuGaR/output/final/object6/visual/object6_textured_obj/object6.obj",
+    "visual_sha256": "ad03bf2c06e2a7ff958315f42a52e81def4ea9cf036075fa335873d9ad9c8413"
+  },
+  "target": {
+    "description_package": "maze_solver_description",
+    "middleware": "ROS 2",
+    "simulator": "Gazebo Harmonic"
+  },
+  "transform": {
+    "axis_map_reconstruction_to_ros": [
+      [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    ],
+    "fixed_joint_mount_xyz_metres": [
+      0.0007280067872156562,
+      0.0016424752183310913,
+      0.08108230795162026
+    ],
+    "mesh_frame_center_of_mass_metres": [
+      0.0007280067872156562,
+      0.0016424752183310913,
+      -0.17007894334987855
+    ],
+    "scale_metres_per_reconstruction_unit": 0.12,
+    "target_body_bottom_z_metres": -0.012,
+    "xy_aabb_center_removed_metres": [
+      -0.011908619999885559,
+      -0.0600126613676548
+    ]
+  }
+}

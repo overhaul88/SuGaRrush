@@ -133,6 +133,65 @@ Stages **5–7b in bold** are this project's additions; their development and im
 described in [`docs/notes/Dirac_writeup.pdf`](./docs/notes/Dirac_writeup.pdf). When
 `--gaussian-prune` is off, stage 7 uses `carve_mesh.py` to isolate the object in mesh space instead.
 
+<details>
+<summary><b>Metric scale — real-world dimensions from a co-captured reference cube</b></summary>
+
+The pipeline above reconstructs shape, not size: everything is in arbitrary COLMAP units. Film a
+cube of known side `a` beside the target, in one video, and the output becomes millimetres.
+
+```bash
+./scripts/reconstruct_metric_pair.sh --video inputs/metric_object.mp4 \
+    --name metric_object --ref-side-mm 55.5
+```
+
+**Why it works.** Monocular SfM is exactly invariant under a 7-parameter similarity, so scale is a
+*gauge freedom*, not an unknown to be estimated. Fixing it after reconstruction is exact, not
+approximate — which is why the expensive stages run untouched and one similarity is applied to both
+meshes at the very end. That single shared transform is also what preserves every relative quantity
+between the two objects.
+
+**The method, in five steps.**
+
+1. **One shared front half.** Frames → COLMAP → 3DGS → SuGaR runs once on the scene containing both
+   objects, so they share a world frame by construction (1 h 03 m on a GTX 1650).
+2. **Split in 3D, not 2D.** Cluster the foreground Gaussians (DBSCAN, ε derived from the data). Two
+   objects overlap in projection but never in 3D, so data association never arises.
+3. **Measure the cube from its face planes.** Never a bounding box — a cube's covariance is
+   degenerate, so a PCA-OBB is off by +21…+71% *and unstable*. Opposite face planes are immune to
+   edge rounding and land within 0.01 pp of the predicted bias.
+4. **The cube is also a level.** The fit reports which face was never observed — for a cube on a
+   table that is the face it stands on, so the cube locates the **support plane** exactly. This is
+   far better conditioned than fitting the mat (RANSAC managed only 10% inliers).
+5. **Isolate the target without silhouettes.** Cut the scene mesh above that plane and take the
+   component matching the target's 3D cluster. Necessary here: saliency segmentation kept only the
+   bright cube, leaving 87 of 238 target masks empty, and the silhouette carve reduced the target to
+   a two-face wedge. Plane segmentation recovered the whole object.
+
+**Self-falsification.** A cube is both the ruler and the check on using one: non-orthogonal face
+planes mean shear, disagreeing per-axis sides mean anisotropy, and either means *no scalar scale is
+valid*. Both gates refuse rather than fit a 3×3 correction, and both have been seen to fire.
+
+**Validated run** — 55.5 mm speedcube + printed paper tetrahedron, `mm_per_unit = 106.76 ± 0.80%`:
+
+| Tetrahedron | Measured | True | Error |
+|---|---|---|---|
+| Mean edge (6 edges, from face-plane intersections) | **80.14 mm** ± 2.83 sd | 82.0 mm | **−2.27%** |
+| Volume from fitted apexes | 60,357 mm³ | — | 99.5% of an ideal regular tetrahedron |
+| Min-volume OBB | 59.41 × 59.21 × 58.16 mm | — | cubic to 2% (the regular-tetrahedron signature) |
+| Enclosed volume · surface area | 59,904 mm³ · 11,358 mm² | — | — |
+
+**The error is the reference side, not the method.** Every internal check passed on quantities
+independent of `a` (92% of area in four planes, apex volume to 99.5%, the two cube axes agreeing to
+1.0%, orthogonality 1.67° against a 2° gate). The value of `a` that reconciles the measurement is
+56.79 mm; at `a = 57 mm` the error becomes **+0.37%**. The cube was assigned 55.5 mm from video
+appearance — and `σ_a` covers manufacturing spread around a *known* nominal, never the choice of the
+wrong nominal. **Measure the reference with calipers; nothing downstream can detect an error in it.**
+
+Full methodology, reasoning and run report: [`docs/notes/metric_documentation.md`](./docs/notes/metric_documentation.md).
+Design rationale: [`docs/notes/metric_scale_design.md`](./docs/notes/metric_scale_design.md).
+
+</details>
+
 ---
 
 # Running the pipeline on your system
@@ -414,6 +473,43 @@ markers and logs; exhausting the host or WSL VM may not.
 | `--bilateral-sigma-color` | `10` | color sigma in 8-bit intensity levels |
 | `--bilateral-sigma-space` | `1` | spatial sigma in pixels |
 | `--bilateral-jpeg-quality` | `95` | JPEG quality for filtered selected frames |
+
+### Supervision-domain filtering (stage 6 only)
+
+> **Measured verdict: off by default, and it should stay off.** In a four-arm A/B/C on `object9`
+> with a run-to-run noise floor measured from a duplicate control, the bilaterally-supervised mesh
+> differed from the control by **0.277 % of the bbox diagonal — identical to the 0.277 % floor**.
+> The filter provably works on the images (−69 % noise at +4.6 % peak gradient); screened Poisson
+> immediately downstream erases the difference. Full data:
+> [`bilateral_supervision_hypothesis.md`](./docs/notes/bilateral_supervision_hypothesis.md) §9.
+
+A *different operand* from `--bilateral` above, and the difference is the whole point. `--bilateral`
+filters the frames **on disk**, which are read by five consumers with opposite noise preferences —
+SIFT wants every high-frequency detail, the surface optimizer does not. These flags filter only the
+**GT tensor SuGaR's photometric loss subtracts from its render**; COLMAP, 3DGS, U²-Net and the
+texture bake all keep raw pixels by construction, so the predecessor's −38.79 % SIFT loss is
+structurally unreachable. See
+[`bilateral_supervision_hypothesis.md`](./docs/notes/bilateral_supervision_hypothesis.md).
+
+| Flag | Default | Meaning |
+|:--|:--:|:--|
+| `--supervision-filter` | `none` | `none` / `bilateral` / `gaussian` (the distortion-matched ablation) |
+| `--sf-sigma-r` | — | range sigma in `[0,1]` intensity units. **Calibrate per scene**; do not carry a value across captures |
+| `--sf-sigma-n` | — | measured noise level; `--sf-sigma-r` is derived as `k·σ_n` when not given directly |
+| `--sf-k` | `2.0` | multiplier in `σ_r = k·σ_n` |
+| `--sf-sigma-s` | `1.0` | spatial sigma in render px |
+| `--sf-diameter` | `5` | odd window diameter |
+
+`σ_r` is **not** the sensor-noise floor. Measured on `object9` the right scale is ~14.4/255 — 41× the
+sensor noise (0.35/255) and 2.0× the *cross-view photometric inconsistency* (7.16/255), which is the
+uncertainty that actually binds the loss. Anchoring to sensor noise makes the filter a no-op
+(−5 % residual noise). Calibrate with:
+
+```bash
+conda run -n sugar python scripts/supervision_filter_probe.py \
+    --self-test --scene scenes/myobject \
+    --out output/benchmarks/supervision_filter/myobject_calibration.json
+```
 
 ### Gaussian-space isolation and masked SuGaR
 
@@ -704,6 +800,10 @@ numpy/BLAS and break the pinned torch stack. It is only ever invoked as an exter
 | **`sugar_utils/mask_loss.py`** | **area-normalized masked L1 + eroded-mask SSIM** |
 | **`observation_confidence.py`** | **per-face ρ from cameras + masks; drops never-seen geometry** |
 | **`hull_complete.py`** | **visual-hull completion of the wound (vote carve + calibrated tolerance)** |
+| **`run_symmetry_stage.py`** | **observation-constrained revolution proposals, validation, and samples** |
+| **`benchmark_symmetry_pipeline.py`** | **preregistered same-input A/B: current hull vs symmetry-assisted hull** |
+| **`evaluate_symmetry_benchmark.py`** | **paired held-out silhouettes, geometry safety, and optional ground truth** |
+| **`symmetry_signal_probe.py`** | **estimates a surface's symmetry group — axis and *order* — against a null measured on the same object** |
 | `carve_mesh.py` | mesh-space visual-hull carve (default path); also supplies camera math |
 | `clean_mesh_v2.py` | feature-preserving cleanup (rim/crease-frozen smoothing) |
 | `close_mesh.py` | pymeshfix watertight closure |
@@ -711,6 +811,10 @@ numpy/BLAS and break the pinned torch stack. It is only ever invoked as an exter
 | `color_from_gaussians.py` | per-vertex RGB from the surviving Gaussians (SH → colour) |
 | `bake_texture.py` | weighted-median observation-only texture atlas |
 | `make_collision.py` | CoACD convex decomposition → collision OBJ + URDF |
+| **`sugar_utils/supervision_filter.py`** | **mask-restricted bilateral filter on the photometric supervision target; noise + distortion calibration** |
+| **`supervision_filter_probe.py`** | **operator invariants (I1–I6) + per-scene calibration of σ_r and the matched Gaussian** |
+| **`run_supervision_ab.sh`** | **four-arm supervision A/B/C with hard-linked shared upstream and a memory watchdog** |
+| **`benchmark_supervision.py`** | **analyzer: resolution-independent roughness/crease, noise floor, acceptance gates** |
 | `view_ply.py` | type-aware `.ply` viewer (Gaussian cloud vs mesh) |
 | `clean_mesh.py` | v1 cleanup (superseded; kept for reference) |
 
@@ -721,6 +825,8 @@ numpy/BLAS and break the pinned torch stack. It is only ever invoked as an exter
 Built on top of <a href="https://github.com/Anttwo/SuGaR">SuGaR (Guédon &amp; Lepetit, CVPR 2024)</a>.<br>
 SDF optimization write-up: <a href="./docs/notes/optimization_report.md">optimization_report.md</a> ·
 Pipeline engineering log: <a href="./docs/notes/3dReconstruction.md">3dReconstruction.md</a> ·
-Completion theory: <a href="./docs/notes/morphogenetic_completion.md">morphogenetic_completion.md</a>
+Completion theory: <a href="./docs/notes/morphogenetic_completion.md">morphogenetic_completion.md</a> ·
+Symmetry benchmark: <a href="./docs/notes/symmetry_benchmark.md">symmetry_benchmark.md</a> ·
+Symmetry hierarchy hypothesis: <a href="./docs/notes/symmetry_hypothesis.md">symmetry_hypothesis.md</a>
 
 </div>
